@@ -1,0 +1,20 @@
+{
+  "name": "graphql-static",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite-node -w src/script.ts",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^20.4.2",
+    "typescript": "^5.0.2",
+    "vite": "^4.4.0"
+  },
+  "dependencies": {
+    "graphql-tag": "^2.12.6",
+    "vite-node": "^0.33.0"
+  }
+}
