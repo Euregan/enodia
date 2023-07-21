@@ -21,8 +21,12 @@ const file = ts.createSourceFile(
 const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
 
 console.log("// TYPES");
-console.log(printer.printList(0, schemaToTypes(schema), file));
+console.log(
+  printer.printList(ts.ListFormat.MultiLine, schemaToTypes(schema), file)
+);
 
 console.log();
 console.log("// CLIENT");
-console.log(printer.printList(0, schemaToClient(schema), file));
+console.log(
+  printer.printList(ts.ListFormat.MultiLine, schemaToClient(schema), file)
+);
