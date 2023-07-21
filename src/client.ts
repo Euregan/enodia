@@ -12,6 +12,16 @@ import ts, {
   TypeLiteralNode,
 } from "typescript";
 
+const gqlTypeToString = (type: TypeNode): string => {
+  switch (type.kind) {
+    case Kind.NAMED_TYPE:
+      return type.name.value;
+    case Kind.LIST_TYPE:
+    case Kind.NON_NULL_TYPE:
+      return gqlTypeToString(type.type);
+  }
+};
+
 const gqlQueriesToTsFunctionDefinitions = (
   queries: ObjectTypeDefinitionNode
 ): Array<PropertyAssignment> =>
@@ -21,7 +31,17 @@ const gqlQueriesToTsFunctionDefinitions = (
       ts.factory.createArrowFunction(
         undefined,
         undefined,
-        [],
+        [
+          ts.factory.createParameterDeclaration(
+            undefined,
+            undefined,
+            "query",
+            undefined,
+            ts.factory.createTypeReferenceNode(
+              `${gqlTypeToString(field.type)}Query`
+            )
+          ),
+        ],
         undefined,
         undefined,
         ts.factory.createCallExpression(
@@ -82,7 +102,7 @@ const gqlDefinitionsToTsDeclarations = (schema: DocumentNode) =>
   ).map((node) =>
     ts.factory.createTypeAliasDeclaration(
       [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
-      ts.factory.createIdentifier(node.name.value),
+      ts.factory.createIdentifier(`${node.name.value}Query`),
       undefined,
       ts.factory.createArrayTypeNode(
         ts.factory.createUnionTypeNode(
