@@ -172,10 +172,12 @@ const declareCallFunction = () =>
         [
           createArrowFunction(
             [createParameterDeclaration("response", "Response")],
-            ts.factory.createPropertyAccessChain(
-              createCallExpression("response", []),
-              undefined,
-              "json"
+            createCallExpression(
+              ts.factory.createPropertyAccessExpression(
+                ts.factory.createIdentifier("response"),
+                "json"
+              ),
+              []
             )
           ),
         ]
@@ -198,20 +200,8 @@ export const schemaToClient = (schema: DocumentNode) => {
     ...gqlDefinitionsToTsDeclarations(schema),
     declareCallFunction(),
     ts.factory.createExportDefault(
-      ts.factory.createArrowFunction(
-        undefined,
-        undefined,
-        [
-          ts.factory.createParameterDeclaration(
-            undefined,
-            undefined,
-            "graphqlServerUrl",
-            undefined,
-            ts.factory.createTypeReferenceNode("string")
-          ),
-        ],
-        undefined,
-        undefined,
+      createArrowFunction(
+        [createParameterDeclaration("graphqlServerUrl", "string")],
         ts.factory.createObjectLiteralExpression(
           (queries
             ? [
@@ -228,14 +218,7 @@ export const schemaToClient = (schema: DocumentNode) => {
             mutations
               ? ts.factory.createPropertyAssignment(
                   "mutate",
-                  ts.factory.createArrowFunction(
-                    undefined,
-                    undefined,
-                    [],
-                    undefined,
-                    undefined,
-                    ts.factory.createObjectLiteralExpression([], true)
-                  )
+                  createArrowFunction([], createObjectLiteralExpression({}))
                 )
               : []
           ),

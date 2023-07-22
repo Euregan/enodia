@@ -80,11 +80,11 @@ export const createVariableDeclaration = (
   );
 
 export const createCallExpression = (
-  name: string,
+  name: string | Expression,
   parameters: Array<Expression | string>
 ) =>
   ts.factory.createCallExpression(
-    ts.factory.createIdentifier(name),
+    typeof name === "string" ? ts.factory.createIdentifier(name) : name,
     undefined,
     parameters.map((parameter) =>
       typeof parameter === "string"
