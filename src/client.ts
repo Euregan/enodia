@@ -89,7 +89,7 @@ const gqlTypeToTsLiteralNode = (
               undefined,
               ts.factory.createIdentifier(name),
               undefined,
-              ts.factory.createTypeReferenceNode(type.name.value)
+              ts.factory.createTypeReferenceNode(`${type.name.value}Query`)
             ),
           ]);
       }
@@ -146,7 +146,7 @@ const declareCallFunction = () =>
       [
         createParameterDeclaration("graphqlServerUrl", "string"),
         createParameterDeclaration("query", "string"),
-        createParameterDeclaration("results", "Fields"),
+        createParameterDeclaration("returns", "Fields"),
       ],
 
       ts.factory.createCallChain(

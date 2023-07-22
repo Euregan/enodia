@@ -4,11 +4,6 @@ import ts, {
   Node,
   ObjectLiteralExpression,
   ParameterDeclaration,
-  StringLiteral,
-  TemplateExpression,
-  TemplateMiddle,
-  TemplateSpan,
-  TemplateTail,
   isExpression,
 } from "typescript";
 
@@ -23,14 +18,13 @@ type Object = {
 
 // TODO: Clean up this dirty hack
 const isTsNode = (object: unknown): object is Node => true;
-
 export const createObjectLiteralExpression = (
   object: Object
 ): ObjectLiteralExpression =>
   ts.factory.createObjectLiteralExpression(
     Object.entries(object).map(([key, value]) =>
       ts.factory.createPropertyAssignment(
-        key,
+        ts.factory.createStringLiteral(key),
         typeof value === "object"
           ? isTsNode(value) && isExpression(value)
             ? value
