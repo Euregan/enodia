@@ -54,7 +54,11 @@ const gqlQueriesToTsFunctionDefinitions = (
         ts.factory.createCallExpression(
           ts.factory.createIdentifier("call"),
           undefined,
-          [ts.factory.createIdentifier("graphqlServerUrl")]
+          [
+            ts.factory.createIdentifier("graphqlServerUrl"),
+            ts.factory.createStringLiteral(field.name.value),
+            ts.factory.createIdentifier("query"),
+          ]
         )
       )
     )
