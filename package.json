@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite-node -w src/script.ts",
+    "dev": "vite-node -w src/cli.ts -- https://raw.githubusercontent.com/tcgdex/cards-database/master/meta/definitions/graphql.gql example/src/client.ts",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
