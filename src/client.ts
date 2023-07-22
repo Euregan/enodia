@@ -119,6 +119,22 @@ const gqlDefinitionsToTsDeclarations = (schema: DocumentNode) =>
     )
   );
 
+const declareFieldsType = () =>
+  ts.factory.createTypeAliasDeclaration(
+    undefined,
+    ts.factory.createIdentifier("Fields"),
+    undefined,
+    ts.factory.createArrayTypeNode(
+      ts.factory.createUnionTypeNode([
+        ts.factory.createTypeReferenceNode("string"),
+        ts.factory.createTypeReferenceNode("Record", [
+          ts.factory.createTypeReferenceNode("string"),
+          ts.factory.createTypeReferenceNode("Fields"),
+        ]),
+      ])
+    )
+  );
+
 const declareCallFunction = () =>
   createVariableDeclaration(
     "call",
@@ -197,8 +213,9 @@ export const schemaToClient = (schema: DocumentNode) => {
   ) as ObjectTypeDefinitionNode | undefined;
 
   return ts.factory.createNodeArray([
-    ...gqlDefinitionsToTsDeclarations(schema),
+    declareFieldsType(),
     declareCallFunction(),
+    ...gqlDefinitionsToTsDeclarations(schema),
     ts.factory.createExportDefault(
       createArrowFunction(
         [createParameterDeclaration("graphqlServerUrl", "string")],
