@@ -139,6 +139,167 @@ const declareFieldsType = () =>
     )
   );
 
+const declareFieldsToQueryFunction = () =>
+  createVariableDeclaration(
+    "fieldsToQuery",
+    createArrowFunction(
+      [createParameterDeclaration("query", "Fields")],
+      ts.factory.createBlock(
+        [
+          ts.factory.createVariableStatement(
+            undefined,
+            createVariableDeclaration(
+              "scalars",
+              ts.factory.createAsExpression(
+                createCallExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("query"),
+                    "filter"
+                  ),
+                  [
+                    createArrowFunction(
+                      [createParameterDeclaration("field")],
+                      ts.factory.createBinaryExpression(
+                        ts.factory.createTypeOfExpression(
+                          ts.factory.createIdentifier("field")
+                        ),
+                        SyntaxKind.EqualsEqualsEqualsToken,
+                        ts.factory.createStringLiteral("string")
+                      )
+                    ),
+                  ]
+                ),
+                ts.factory.createTypeReferenceNode("Array", [
+                  ts.factory.createTypeReferenceNode("string"),
+                ])
+              )
+            )
+          ),
+          ts.factory.createVariableStatement(
+            undefined,
+            createVariableDeclaration(
+              "objects",
+              ts.factory.createAsExpression(
+                createCallExpression(
+                  ts.factory.createPropertyAccessExpression(
+                    ts.factory.createIdentifier("query"),
+                    "filter"
+                  ),
+                  [
+                    createArrowFunction(
+                      [createParameterDeclaration("field")],
+                      ts.factory.createBinaryExpression(
+                        ts.factory.createTypeOfExpression(
+                          ts.factory.createIdentifier("field")
+                        ),
+                        SyntaxKind.ExclamationEqualsEqualsToken,
+                        ts.factory.createStringLiteral("string")
+                      )
+                    ),
+                  ]
+                ),
+                ts.factory.createTypeReferenceNode("Array", [
+                  ts.factory.createTypeReferenceNode("Record", [
+                    ts.factory.createTypeReferenceNode("string"),
+                    ts.factory.createTypeReferenceNode("Fields"),
+                  ]),
+                ])
+              )
+            )
+          ),
+          ts.factory.createReturnStatement(
+            ts.factory.createTemplateExpression(
+              ts.factory.createTemplateHead(""),
+              [
+                ts.factory.createTemplateSpan(
+                  createCallExpression(
+                    ts.factory.createPropertyAccessExpression(
+                      ts.factory.createIdentifier("scalars"),
+                      "join"
+                    ),
+                    [ts.factory.createStringLiteral("\n")]
+                  ),
+                  ts.factory.createTemplateMiddle("\n")
+                ),
+                ts.factory.createTemplateSpan(
+                  createCallExpression(
+                    ts.factory.createPropertyAccessExpression(
+                      createCallExpression(
+                        ts.factory.createPropertyAccessExpression(
+                          ts.factory.createIdentifier("objects"),
+                          "map"
+                        ),
+                        [
+                          createArrowFunction(
+                            [createParameterDeclaration("object")],
+                            createCallExpression(
+                              ts.factory.createPropertyAccessExpression(
+                                createCallExpression(
+                                  ts.factory.createPropertyAccessExpression(
+                                    ts.factory.createIdentifier("Object"),
+                                    "entries"
+                                  ),
+                                  [ts.factory.createIdentifier("object")]
+                                ),
+                                "map"
+                              ),
+                              [
+                                createArrowFunction(
+                                  [
+                                    ts.factory.createParameterDeclaration(
+                                      undefined,
+                                      undefined,
+                                      ts.factory.createArrayBindingPattern([
+                                        ts.factory.createBindingElement(
+                                          undefined,
+                                          undefined,
+                                          "key"
+                                        ),
+                                        ts.factory.createBindingElement(
+                                          undefined,
+                                          undefined,
+                                          "value"
+                                        ),
+                                      ])
+                                    ),
+                                  ],
+                                  ts.factory.createTemplateExpression(
+                                    ts.factory.createTemplateHead(""),
+                                    [
+                                      ts.factory.createTemplateSpan(
+                                        ts.factory.createIdentifier("key"),
+                                        ts.factory.createTemplateMiddle(" {")
+                                      ),
+                                      ts.factory.createTemplateSpan(
+                                        createCallExpression("fieldsToQuery", [
+                                          ts.factory.createIdentifier("value"),
+                                        ]),
+                                        ts.factory.createTemplateTail("}")
+                                      ),
+                                    ]
+                                  )
+                                ),
+                              ]
+                            )
+                          ),
+                        ]
+                      ),
+                      "join"
+                    ),
+                    [ts.factory.createStringLiteral("\n")]
+                  ),
+                  ts.factory.createTemplateTail("\n")
+                ),
+              ]
+            )
+          ),
+        ],
+        true
+      ),
+      ts.factory.createTypeReferenceNode("string")
+    )
+  );
+
 const declareCallFunction = () =>
   createVariableDeclaration(
     "call",
@@ -148,7 +309,6 @@ const declareCallFunction = () =>
         createParameterDeclaration("query", "string"),
         createParameterDeclaration("returns", "Fields"),
       ],
-
       ts.factory.createCallChain(
         ts.factory.createPropertyAccessChain(
           createCallExpression("fetch", [
@@ -170,7 +330,7 @@ const declareCallFunction = () =>
                         ts.factory.createTemplateMiddle(" {\n ")
                       ),
                       ts.factory.createTemplateSpan(
-                        createCallExpression("listFields", [
+                        createCallExpression("fieldsToQuery", [
                           ts.factory.createIdentifier("returns"),
                         ]),
                         ts.factory.createTemplateTail(" } }")
@@ -218,6 +378,7 @@ export const schemaToClient = (schema: DocumentNode) => {
 
   return ts.factory.createNodeArray([
     declareFieldsType(),
+    declareFieldsToQueryFunction(),
     declareCallFunction(),
     ...gqlDefinitionsToTsDeclarations(schema),
     ts.factory.createExportDefault(

@@ -4,6 +4,7 @@ import ts, {
   Node,
   ObjectLiteralExpression,
   ParameterDeclaration,
+  TypeNode,
   isExpression,
 } from "typescript";
 
@@ -35,24 +36,25 @@ export const createObjectLiteralExpression = (
     true
   );
 
-export const createParameterDeclaration = (name: string, type: string) =>
+export const createParameterDeclaration = (name: string, type?: string) =>
   ts.factory.createParameterDeclaration(
     undefined,
     undefined,
     name,
     undefined,
-    ts.factory.createTypeReferenceNode(type)
+    type ? ts.factory.createTypeReferenceNode(type) : undefined
   );
 
 export const createArrowFunction = (
   parameters: Array<ParameterDeclaration>,
-  body: ConciseBody
+  body: ConciseBody,
+  returnType?: TypeNode
 ) =>
   ts.factory.createArrowFunction(
     undefined,
     undefined,
     parameters,
-    undefined,
+    returnType,
     undefined,
     body
   );
