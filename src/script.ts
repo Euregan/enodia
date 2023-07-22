@@ -6,7 +6,7 @@ import { schemaToClient } from "./client.ts";
 
 console.clear();
 
-const schemaPath = "./src/schema.graphql";
+const schemaPath = "./src/pokemon.graphql";
 
 const schema = gql(await readFile(schemaPath, "utf-8"));
 

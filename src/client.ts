@@ -11,6 +11,13 @@ import ts, {
   LiteralTypeNode,
   TypeLiteralNode,
 } from "typescript";
+import {
+  createArrowFunction,
+  createCallExpression,
+  createObjectLiteralExpression,
+  createParameterDeclaration,
+  createVariableDeclaration,
+} from "./helpers.ts";
 
 const gqlTypeToString = (type: TypeNode): string => {
   switch (type.kind) {
@@ -113,46 +120,67 @@ const gqlDefinitionsToTsDeclarations = (schema: DocumentNode) =>
   );
 
 const declareCallFunction = () =>
-  ts.factory.createVariableDeclarationList(
-    [
-      ts.factory.createVariableDeclaration(
-        "call",
-        undefined,
-        undefined,
-        ts.factory.createArrowFunction(
-          undefined,
-          undefined,
-          [
-            ts.factory.createParameterDeclaration(
-              undefined,
-              undefined,
-              "graphqlServerUrl",
-              undefined,
-              ts.factory.createTypeReferenceNode("string")
-            ),
-          ],
-          undefined,
-          undefined,
-          ts.factory.createCallExpression(
-            ts.factory.createIdentifier("fetch"),
-            undefined,
-            [
-              ts.factory.createIdentifier("graphqlServerUrl"),
-              ts.factory.createObjectLiteralExpression(
-                [
-                  ts.factory.createPropertyAssignment(
-                    "method",
-                    ts.factory.createStringLiteral("POST")
+  createVariableDeclaration(
+    "call",
+    createArrowFunction(
+      [
+        createParameterDeclaration("graphqlServerUrl", "string"),
+        createParameterDeclaration("query", "string"),
+        createParameterDeclaration("results", "Fields"),
+      ],
+
+      ts.factory.createCallChain(
+        ts.factory.createPropertyAccessChain(
+          createCallExpression("fetch", [
+            "graphqlServerUrl",
+            createObjectLiteralExpression({
+              method: "POST",
+              body: createCallExpression("JSON.stringify", [
+                createObjectLiteralExpression({
+                  operationName: ts.factory.createIdentifier("query"),
+                  query: ts.factory.createTemplateExpression(
+                    ts.factory.createTemplateHead("query "),
+                    [
+                      ts.factory.createTemplateSpan(
+                        ts.factory.createIdentifier("query"),
+                        ts.factory.createTemplateMiddle(" {\n ")
+                      ),
+                      ts.factory.createTemplateSpan(
+                        ts.factory.createIdentifier("query"),
+                        ts.factory.createTemplateMiddle(" {\n ")
+                      ),
+                      ts.factory.createTemplateSpan(
+                        createCallExpression("listFields", [
+                          ts.factory.createIdentifier("returns"),
+                        ]),
+                        ts.factory.createTemplateTail(" } }")
+                      ),
+                    ]
                   ),
-                ],
-                true
-              ),
-            ]
-          )
-        )
-      ),
-    ],
-    ts.NodeFlags.Const
+                }),
+              ]),
+              headers: {
+                "Content-Type": "application/json",
+              },
+            }),
+          ]),
+          undefined,
+          "then"
+        ),
+        undefined,
+        [],
+        [
+          createArrowFunction(
+            [createParameterDeclaration("response", "Response")],
+            ts.factory.createPropertyAccessChain(
+              createCallExpression("response", []),
+              undefined,
+              "json"
+            )
+          ),
+        ]
+      )
+    )
   );
 
 export const schemaToClient = (schema: DocumentNode) => {
