@@ -12,7 +12,10 @@ function App() {
       setLoading(true);
 
       graphql.query
-        .cards(["category", "description", "name", { set: ["name"] }])
+        // .cards(["id", "category", "description", "name", { set: ["name"] }])
+        .card(["name", "category", "description", { set: ["name"] }], {
+          id: "basep-4",
+        })
         .then((data: unknown) => setResult(data))
         .finally(() => setLoading(false));
     }

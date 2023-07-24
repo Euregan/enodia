@@ -4,6 +4,8 @@ import ts, {
   Node,
   ObjectLiteralExpression,
   ParameterDeclaration,
+  SyntaxKind,
+  TypeLiteralNode,
   TypeNode,
   isExpression,
 } from "typescript";
@@ -36,13 +38,17 @@ export const createObjectLiteralExpression = (
     true
   );
 
-export const createParameterDeclaration = (name: string, type?: string) =>
+export const createParameterDeclaration = (
+  name: string,
+  type?: string | TypeLiteralNode,
+  optional: boolean = false
+) =>
   ts.factory.createParameterDeclaration(
     undefined,
     undefined,
     name,
-    undefined,
-    type ? ts.factory.createTypeReferenceNode(type) : undefined
+    optional ? ts.factory.createToken(SyntaxKind.QuestionToken) : undefined,
+    typeof type === "string" ? ts.factory.createTypeReferenceNode(type) : type
   );
 
 export const createArrowFunction = (
