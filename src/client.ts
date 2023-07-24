@@ -5,6 +5,7 @@ import {
   TypeNode,
   FieldDefinitionNode,
   InputValueDefinitionNode,
+  InputObjectTypeDefinitionNode,
 } from "graphql";
 import ts, {
   PropertyAssignment,
@@ -159,20 +160,47 @@ const gqlDefinitionsToTsDeclarations = (
         // We don't expose these types
         !["Query", "Mutation"].includes(node.name.value)
     ) as Array<ObjectTypeDefinitionNode>
-  ).map((node) =>
-    ts.factory.createTypeAliasDeclaration(
-      [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
-      ts.factory.createIdentifier(`${node.name.value}Query`),
-      undefined,
-      ts.factory.createArrayTypeNode(
-        ts.factory.createUnionTypeNode(
-          (node.fields || []).map((field) =>
-            gqlFieldToTsLiteralNode(field, scalars)
+  )
+    .map((node) =>
+      ts.factory.createTypeAliasDeclaration(
+        [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
+        ts.factory.createIdentifier(`${node.name.value}Query`),
+        undefined,
+        ts.factory.createArrayTypeNode(
+          ts.factory.createUnionTypeNode(
+            (node.fields || []).map((field) =>
+              gqlFieldToTsLiteralNode(field, scalars)
+            )
           )
         )
       )
     )
-  );
+    .concat(
+      (
+        schema.definitions.filter(
+          (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION
+        ) as Array<InputObjectTypeDefinitionNode>
+      ).map((node) =>
+        ts.factory.createTypeAliasDeclaration(
+          [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
+          ts.factory.createIdentifier(node.name.value),
+          undefined,
+          ts.factory.createTypeLiteralNode(
+            (node.fields || []).map((field) =>
+              // TODO: Add handling of nested objects
+              ts.factory.createPropertySignature(
+                undefined,
+                ts.factory.createStringLiteral(field.name.value),
+                undefined,
+                ts.factory.createTypeReferenceNode(
+                  gqlTypeToTsString(field.type, scalars)
+                )
+              )
+            )
+          )
+        )
+      )
+    );
 
 const declareArgumentsTypes = () => [
   ts.factory.createTypeAliasDeclaration(
