@@ -409,35 +409,41 @@ const declareArgsToGqlFunction = () =>
         ts.factory.createPropertyAccessExpression(
           createCallExpression(
             ts.factory.createPropertyAccessExpression(
-              ts.factory.createIdentifier("Object"),
-              "keys"
+              createCallExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createIdentifier("Object"),
+                  "keys"
+                ),
+                [ts.factory.createIdentifier("args")]
+              ),
+              "map"
             ),
-            [ts.factory.createIdentifier("args")]
-          ),
-          "map"
-        ),
-        [
-          createArrowFunction(
-            [createParameterDeclaration("key")],
-            ts.factory.createTemplateExpression(
-              ts.factory.createTemplateHead("$"),
-              [
-                ts.factory.createTemplateSpan(
-                  ts.factory.createIdentifier("key"),
-                  ts.factory.createTemplateMiddle(": ")
-                ),
-                ts.factory.createTemplateSpan(
-                  ts.factory.createElementAccessExpression(
-                    ts.factory.createIdentifier("argTypes"),
-                    ts.factory.createIdentifier("key")
-                  ),
+            [
+              createArrowFunction(
+                [createParameterDeclaration("key")],
+                ts.factory.createTemplateExpression(
+                  ts.factory.createTemplateHead("$"),
+                  [
+                    ts.factory.createTemplateSpan(
+                      ts.factory.createIdentifier("key"),
+                      ts.factory.createTemplateMiddle(": ")
+                    ),
+                    ts.factory.createTemplateSpan(
+                      ts.factory.createElementAccessExpression(
+                        ts.factory.createIdentifier("argTypes"),
+                        ts.factory.createIdentifier("key")
+                      ),
 
-                  ts.factory.createTemplateTail("")
-                ),
-              ]
-            )
+                      ts.factory.createTemplateTail("")
+                    ),
+                  ]
+                )
+              ),
+            ]
           ),
-        ]
+          "join"
+        ),
+        [ts.factory.createStringLiteral("\n")]
       )
     )
   );
@@ -451,31 +457,37 @@ const declareVariablesToArgsFunction = () =>
         ts.factory.createPropertyAccessExpression(
           createCallExpression(
             ts.factory.createPropertyAccessExpression(
-              ts.factory.createIdentifier("Object"),
-              "keys"
+              createCallExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createIdentifier("Object"),
+                  "keys"
+                ),
+                [ts.factory.createIdentifier("args")]
+              ),
+              "map"
             ),
-            [ts.factory.createIdentifier("args")]
+            [
+              createArrowFunction(
+                [createParameterDeclaration("key")],
+                ts.factory.createTemplateExpression(
+                  ts.factory.createTemplateHead(""),
+                  [
+                    ts.factory.createTemplateSpan(
+                      ts.factory.createIdentifier("key"),
+                      ts.factory.createTemplateMiddle(": $")
+                    ),
+                    ts.factory.createTemplateSpan(
+                      ts.factory.createIdentifier("key"),
+                      ts.factory.createTemplateTail("")
+                    ),
+                  ]
+                )
+              ),
+            ]
           ),
-          "map"
+          "join"
         ),
-        [
-          createArrowFunction(
-            [createParameterDeclaration("key")],
-            ts.factory.createTemplateExpression(
-              ts.factory.createTemplateHead(""),
-              [
-                ts.factory.createTemplateSpan(
-                  ts.factory.createIdentifier("key"),
-                  ts.factory.createTemplateMiddle(": $")
-                ),
-                ts.factory.createTemplateSpan(
-                  ts.factory.createIdentifier("key"),
-                  ts.factory.createTemplateTail("")
-                ),
-              ]
-            )
-          ),
-        ]
+        [ts.factory.createStringLiteral("\n")]
       )
     )
   );
