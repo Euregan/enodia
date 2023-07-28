@@ -7,6 +7,7 @@ import ts, {
   SyntaxKind,
   TypeLiteralNode,
   TypeNode,
+  TypeReferenceNode,
   isExpression,
 } from "typescript";
 
@@ -40,7 +41,7 @@ export const createObjectLiteralExpression = (
 
 export const createParameterDeclaration = (
   name: string,
-  type?: string | TypeLiteralNode,
+  type?: string | TypeLiteralNode | TypeReferenceNode,
   optional: boolean = false
 ) =>
   ts.factory.createParameterDeclaration(

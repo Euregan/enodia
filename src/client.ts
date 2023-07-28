@@ -313,24 +313,28 @@ const declareArgumentsTypes = () => [
     undefined,
     ts.factory.createIdentifier("Arguments"),
     undefined,
-    ts.factory.createTypeLiteralNode([
-      ts.factory.createPropertySignature(
-        undefined,
-        ts.factory.createComputedPropertyName(
-          ts.factory.createBinaryExpression(
-            ts.factory.createIdentifier("K"),
-            ts.factory.createToken(SyntaxKind.InKeyword),
-            ts.factory.createIdentifier("string")
-          )
+    ts.factory.createUnionTypeNode([
+      ts.factory.createTypeReferenceNode("string"),
+      ts.factory.createTypeReferenceNode("number"),
+      ts.factory.createTypeReferenceNode("boolean"),
+      ts.factory.createTypeReferenceNode("null"),
+      ts.factory.createTypeLiteralNode([
+        ts.factory.createPropertySignature(
+          undefined,
+          ts.factory.createComputedPropertyName(
+            ts.factory.createBinaryExpression(
+              ts.factory.createIdentifier("K"),
+              ts.factory.createToken(SyntaxKind.InKeyword),
+              ts.factory.createIdentifier("string")
+            )
+          ),
+          undefined,
+          ts.factory.createTypeReferenceNode("Arguments")
         ),
-        undefined,
-        ts.factory.createUnionTypeNode([
-          ts.factory.createTypeReferenceNode("string"),
-          ts.factory.createTypeReferenceNode("number"),
-          ts.factory.createTypeReferenceNode("boolean"),
-          ts.factory.createTypeReferenceNode("Arguments"),
-        ])
-      ),
+      ]),
+      ts.factory.createTypeReferenceNode("Array", [
+        ts.factory.createTypeReferenceNode("Arguments"),
+      ]),
     ])
   ),
   ts.factory.createTypeAliasDeclaration(
@@ -552,7 +556,13 @@ const declareArgsToGqlFunction = () =>
     createArrowFunction(
       [
         createParameterDeclaration("argTypes", "ArgumentTypes"),
-        createParameterDeclaration("args", "Arguments"),
+        createParameterDeclaration(
+          "args",
+          ts.factory.createTypeReferenceNode("Record", [
+            ts.factory.createTypeReferenceNode("string"),
+            ts.factory.createTypeReferenceNode("Arguments"),
+          ])
+        ),
       ],
       createCallExpression(
         ts.factory.createPropertyAccessExpression(
@@ -601,7 +611,15 @@ const declareVariablesToArgsFunction = () =>
   createVariableDeclaration(
     "variablesToArgs",
     createArrowFunction(
-      [createParameterDeclaration("args", "Arguments")],
+      [
+        createParameterDeclaration(
+          "args",
+          ts.factory.createTypeReferenceNode("Record", [
+            ts.factory.createTypeReferenceNode("string"),
+            ts.factory.createTypeReferenceNode("Arguments"),
+          ])
+        ),
+      ],
       createCallExpression(
         ts.factory.createPropertyAccessExpression(
           createCallExpression(
@@ -649,7 +667,14 @@ const declareCallFunction = () =>
         createParameterDeclaration("graphqlServerUrl", "string"),
         createParameterDeclaration("query", "string"),
         createParameterDeclaration("returns", "Fields"),
-        createParameterDeclaration("args", "Arguments", true),
+        createParameterDeclaration(
+          "args",
+          ts.factory.createTypeReferenceNode("Record", [
+            ts.factory.createTypeReferenceNode("string"),
+            ts.factory.createTypeReferenceNode("Arguments"),
+          ]),
+          true
+        ),
         createParameterDeclaration("argTypes", "ArgumentTypes", true),
       ],
       ts.factory.createCallChain(
