@@ -29,16 +29,17 @@ const isGqlTypeOptional = (type: TypeNode): boolean =>
 
 const gqlTypeToTsString = (
   type: TypeNode,
-  scalars: Array<GqlScalarToTs>
+  scalars: Array<GqlScalarToTs>,
+  suffix?: string
 ): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE: {
       const tsType = scalars.find(({ gql }) => gql === type.name.value);
-      return tsType ? tsType.ts : type.name.value;
+      return tsType ? tsType.ts : `${type.name.value}${suffix || ""}`;
     }
     case Kind.LIST_TYPE:
     case Kind.NON_NULL_TYPE:
-      return gqlTypeToTsString(type.type, scalars);
+      return gqlTypeToTsString(type.type, scalars, suffix);
   }
 };
 
@@ -98,7 +99,7 @@ const gqlQueriesToTsFunctionDefinitions = (
         [
           createParameterDeclaration(
             "query",
-            `${gqlTypeToTsString(field.type, scalars)}Query`
+            gqlTypeToTsString(field.type, scalars, "Query")
           ),
         ].concat(
           field.arguments && field.arguments.length > 0
