@@ -16,6 +16,7 @@ import ts, {
   TypeLiteralNode,
   Expression,
   ImportDeclaration,
+  ParameterDeclaration,
 } from "typescript";
 import {
   createArrowFunction,
@@ -27,6 +28,17 @@ import {
 
 const isEnum = (type: string, enums: Array<EnumTypeDefinitionNode>): boolean =>
   enums.some((e) => e.name.value === type);
+
+const isScalar = (type: TypeNode, scalars: Array<GqlScalarToTs>): boolean => {
+  switch (type.kind) {
+    case Kind.NAMED_TYPE:
+      return scalars.some(({ gql }) => gql === type.name.value);
+    case Kind.LIST_TYPE:
+      return false;
+    case Kind.NON_NULL_TYPE:
+      return isScalar(type.type, scalars);
+  }
+};
 
 const isGqlTypeOptional = (type: TypeNode): boolean =>
   type.kind !== Kind.NON_NULL_TYPE;
@@ -107,36 +119,47 @@ const gqlQueriesToTsFunctionDefinitions = (
     ts.factory.createPropertyAssignment(
       field.name.value,
       createArrowFunction(
-        [
-          createParameterDeclaration(
-            "query",
-            gqlTypeToTsString(field.type, scalars, enums, "Query")
+        ([] as Array<ParameterDeclaration>)
+          .concat(
+            isScalar(field.type, scalars)
+              ? []
+              : [
+                  createParameterDeclaration(
+                    "query",
+                    gqlTypeToTsString(field.type, scalars, enums, "Query")
+                  ),
+                ]
+          )
+          .concat(
+            field.arguments && field.arguments.length > 0
+              ? gqlArgumentsToTsParameterDeclaration(
+                  field.arguments,
+                  scalars,
+                  enums
+                )
+              : []
           ),
-        ].concat(
-          field.arguments && field.arguments.length > 0
-            ? gqlArgumentsToTsParameterDeclaration(
-                field.arguments,
-                scalars,
-                enums
-              )
-            : []
-        ),
         createCallExpression(
           ts.factory.createIdentifier("call"),
           (
             [
               ts.factory.createIdentifier("graphqlServerUrl"),
               ts.factory.createStringLiteral(field.name.value),
-              ts.factory.createIdentifier("query"),
             ] as Array<Expression>
-          ).concat(
-            field.arguments && field.arguments.length > 0
-              ? [
-                  ts.factory.createIdentifier("args"),
-                  gqlArgumentsToTsArgumentTypesDeclaration(field.arguments),
-                ]
-              : []
           )
+            .concat(
+              isScalar(field.type, scalars)
+                ? [ts.factory.createNull()]
+                : [ts.factory.createIdentifier("query")]
+            )
+            .concat(
+              field.arguments && field.arguments.length > 0
+                ? [
+                    ts.factory.createIdentifier("args"),
+                    gqlArgumentsToTsArgumentTypesDeclaration(field.arguments),
+                  ]
+                : []
+            )
         )
       )
     )
@@ -326,25 +349,28 @@ const declareFieldsType = () =>
     undefined,
     ts.factory.createIdentifier("Fields"),
     undefined,
-    ts.factory.createArrayTypeNode(
-      ts.factory.createUnionTypeNode([
-        ts.factory.createTypeReferenceNode("string"),
-        ts.factory.createIntersectionTypeNode([
-          ts.factory.createTypeLiteralNode([
-            ts.factory.createPropertySignature(
-              undefined,
-              ts.factory.createIdentifier("$args"),
-              ts.factory.createToken(SyntaxKind.QuestionToken),
-              ts.factory.createTypeReferenceNode("Arguments")
-            ),
+    ts.factory.createUnionTypeNode([
+      ts.factory.createLiteralTypeNode(ts.factory.createNull()),
+      ts.factory.createArrayTypeNode(
+        ts.factory.createUnionTypeNode([
+          ts.factory.createTypeReferenceNode("string"),
+          ts.factory.createIntersectionTypeNode([
+            ts.factory.createTypeLiteralNode([
+              ts.factory.createPropertySignature(
+                undefined,
+                ts.factory.createIdentifier("$args"),
+                ts.factory.createToken(SyntaxKind.QuestionToken),
+                ts.factory.createTypeReferenceNode("Arguments")
+              ),
+            ]),
+            ts.factory.createTypeReferenceNode("Record", [
+              ts.factory.createTypeReferenceNode("string"),
+              ts.factory.createTypeReferenceNode("Fields"),
+            ]),
           ]),
-          ts.factory.createTypeReferenceNode("Record", [
-            ts.factory.createTypeReferenceNode("string"),
-            ts.factory.createTypeReferenceNode("Fields"),
-          ]),
-        ]),
-      ])
-    )
+        ])
+      ),
+    ])
   );
 
 const declareFieldsToQueryFunction = () =>
@@ -354,6 +380,18 @@ const declareFieldsToQueryFunction = () =>
       [createParameterDeclaration("query", "Fields")],
       ts.factory.createBlock(
         [
+          ts.factory.createIfStatement(
+            ts.factory.createBinaryExpression(
+              ts.factory.createIdentifier("query"),
+              ts.factory.createToken(SyntaxKind.EqualsEqualsEqualsToken),
+              ts.factory.createNull()
+            ),
+            ts.factory.createBlock([
+              ts.factory.createReturnStatement(
+                ts.factory.createStringLiteral("")
+              ),
+            ])
+          ),
           ts.factory.createVariableStatement(
             undefined,
             createVariableDeclaration(
@@ -417,7 +455,7 @@ const declareFieldsToQueryFunction = () =>
           ),
           ts.factory.createReturnStatement(
             ts.factory.createTemplateExpression(
-              ts.factory.createTemplateHead(""),
+              ts.factory.createTemplateHead("{"),
               [
                 ts.factory.createTemplateSpan(
                   createCallExpression(
@@ -476,13 +514,13 @@ const declareFieldsToQueryFunction = () =>
                                     [
                                       ts.factory.createTemplateSpan(
                                         ts.factory.createIdentifier("key"),
-                                        ts.factory.createTemplateMiddle(" {")
+                                        ts.factory.createTemplateMiddle(" ")
                                       ),
                                       ts.factory.createTemplateSpan(
                                         createCallExpression("fieldsToQuery", [
                                           ts.factory.createIdentifier("value"),
                                         ]),
-                                        ts.factory.createTemplateTail("}")
+                                        ts.factory.createTemplateTail("")
                                       ),
                                     ]
                                   )
@@ -496,7 +534,7 @@ const declareFieldsToQueryFunction = () =>
                     ),
                     [ts.factory.createStringLiteral("\n")]
                   ),
-                  ts.factory.createTemplateTail("\n")
+                  ts.factory.createTemplateTail("\n}")
                 ),
               ]
             )
@@ -679,13 +717,13 @@ const declareCallFunction = () =>
                           ts.factory.createToken(SyntaxKind.ColonToken),
                           ts.factory.createStringLiteral("")
                         ),
-                        ts.factory.createTemplateMiddle(" {\n ")
+                        ts.factory.createTemplateMiddle("\n ")
                       ),
                       ts.factory.createTemplateSpan(
                         createCallExpression("fieldsToQuery", [
                           ts.factory.createIdentifier("returns"),
                         ]),
-                        ts.factory.createTemplateTail(" } }")
+                        ts.factory.createTemplateTail(" }")
                       ),
                     ]
                   ),
