@@ -272,16 +272,33 @@ const gqlDefinitionsToTsDeclarations = (
   return [...types, ...inputs, ...enumerations];
 };
 
+// TODO: Namespace everything so there is no duplicate types, and that no custom type overwrite the client's types
 const declareScalarTypesImport = (
   scalarTypes: Record<string, ScalarType>,
   customScalars: Array<ScalarTypeDefinitionNode>
 ) =>
   customScalars
-    .map((scalar) => {
+    .map((scalar, index) => {
       const type = scalarTypes[scalar.name.value];
       if (!type) {
         // TODO: Write a nicer, more detailed error, with steps to solve
         throw `No type for scalar ${scalar.name.value}.`;
+      }
+
+      // We make sure not to import twice the same type
+      if (
+        customScalars.some((s, i) => {
+          const t = scalarTypes[s.name.value];
+          return (
+            "path" in t &&
+            "path" in type &&
+            t.path === type.path &&
+            t.name === type.name &&
+            i < index
+          );
+        })
+      ) {
+        return null;
       }
 
       return "path" in type
