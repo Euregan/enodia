@@ -7,7 +7,7 @@
     "enodia": "./dist"
   },
   "scripts": {
-    "dev": "vite-node -w src/cli.ts -- https://raw.githubusercontent.com/tcgdex/cards-database/master/meta/definitions/graphql.gql example/src/client.ts",
+    "dev": "vite-node -w src/cli.ts -- src/pokemon.graphql example/src/client.ts",
     "build": "tsc && vite build"
   },
   "devDependencies": {

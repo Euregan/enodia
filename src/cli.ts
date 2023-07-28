@@ -10,8 +10,7 @@ const [, , input, output] = process.argv;
 
 // TODO: Handle missing config file
 // TODO: Validate the config with zod
-const config = (await import(path.relative(__dirname, "./enodia.config.ts")))
-  .default;
+const config = (await import(path.resolve("./enodia.config.ts"))).default;
 
 console.log("- Fetching schema");
 const schema = gql(
