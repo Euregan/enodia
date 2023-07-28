@@ -735,7 +735,8 @@ export const schemaToClient = (
     declareVariablesToArgsFunction(),
     declareCallFunction(),
     ...gqlDefinitionsToTsDeclarations(schema, scalars),
-    ts.factory.createExportDefault(
+    createVariableDeclaration(
+      "enodia",
       createArrowFunction(
         [createParameterDeclaration("graphqlServerUrl", "string")],
         ts.factory.createObjectLiteralExpression(
@@ -762,5 +763,6 @@ export const schemaToClient = (
         )
       )
     ),
+    ts.factory.createExportDefault(ts.factory.createIdentifier("enodia")),
   ]);
 };
