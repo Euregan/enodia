@@ -20,7 +20,7 @@ type Object = {
 };
 
 // TODO: Clean up this dirty hack
-const isTsNode = (object: unknown): object is Node => true;
+const isTsNode = (_: unknown): _ is Node => true;
 export const createObjectLiteralExpression = (
   object: Object
 ): ObjectLiteralExpression =>

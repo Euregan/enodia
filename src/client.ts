@@ -6,6 +6,7 @@ import {
   FieldDefinitionNode,
   InputValueDefinitionNode,
   InputObjectTypeDefinitionNode,
+  ScalarTypeDefinitionNode,
 } from "graphql";
 import ts, {
   PropertyAssignment,
@@ -13,6 +14,7 @@ import ts, {
   LiteralTypeNode,
   TypeLiteralNode,
   Expression,
+  ImportDeclaration,
 } from "typescript";
 import {
   createArrowFunction,
@@ -25,7 +27,10 @@ import {
 const isGqlTypeOptional = (type: TypeNode): boolean =>
   type.kind !== Kind.NON_NULL_TYPE;
 
-const gqlTypeToTsString = (type: TypeNode, scalars: GqlScalarToTs): string => {
+const gqlTypeToTsString = (
+  type: TypeNode,
+  scalars: Array<GqlScalarToTs>
+): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE: {
       const tsType = scalars.find(({ gql }) => gql === type.name.value);
@@ -51,7 +56,7 @@ const gqlTypeToString = (type: TypeNode): string => {
 
 const gqlArgumentsToTsParameterDeclaration = (
   args: readonly InputValueDefinitionNode[],
-  scalars: GqlScalarToTs
+  scalars: Array<GqlScalarToTs>
 ) => [
   createParameterDeclaration(
     "args",
@@ -84,7 +89,7 @@ const gqlArgumentsToTsArgumentTypesDeclaration = (
 
 const gqlQueriesToTsFunctionDefinitions = (
   queries: ObjectTypeDefinitionNode,
-  scalars: GqlScalarToTs
+  scalars: Array<GqlScalarToTs>
 ): Array<PropertyAssignment> =>
   (queries.fields || []).map((field) =>
     ts.factory.createPropertyAssignment(
@@ -124,7 +129,7 @@ const gqlQueriesToTsFunctionDefinitions = (
 const gqlTypeToTsLiteralNode = (
   type: TypeNode,
   name: string,
-  scalars: GqlScalarToTs
+  scalars: Array<GqlScalarToTs>
 ): LiteralTypeNode | TypeLiteralNode => {
   switch (type.kind) {
     case Kind.NAMED_TYPE:
@@ -146,12 +151,12 @@ const gqlTypeToTsLiteralNode = (
 
 const gqlFieldToTsLiteralNode = (
   field: FieldDefinitionNode,
-  scalars: GqlScalarToTs
+  scalars: Array<GqlScalarToTs>
 ) => gqlTypeToTsLiteralNode(field.type, field.name.value, scalars);
 
 const gqlDefinitionsToTsDeclarations = (
   schema: DocumentNode,
-  scalars: GqlScalarToTs
+  scalars: Array<GqlScalarToTs>
 ) =>
   (
     schema.definitions.filter(
@@ -201,6 +206,42 @@ const gqlDefinitionsToTsDeclarations = (
         )
       )
     );
+
+const declareScalarTypesImport = (
+  scalarTypes: Record<string, ScalarType>,
+  customScalars: Array<ScalarTypeDefinitionNode>
+) =>
+  customScalars
+    .map((scalar) => {
+      const type = scalarTypes[scalar.name.value];
+      if (!type) {
+        // TODO: Write a nicer, more detailed error, with steps to solve
+        throw `No type for scalar ${scalar.name.value}.`;
+      }
+
+      return "path" in type
+        ? ts.factory.createImportDeclaration(
+            undefined,
+            ts.factory.createImportClause(
+              true,
+              type.name
+                ? undefined
+                : ts.factory.createIdentifier(scalar.name.value),
+              type.name
+                ? ts.factory.createNamedImports([
+                    ts.factory.createImportSpecifier(
+                      false,
+                      undefined,
+                      ts.factory.createIdentifier(type.name)
+                    ),
+                  ])
+                : undefined
+            ),
+            ts.factory.createStringLiteral(type.path)
+          )
+        : null;
+    })
+    .filter(Boolean) as Array<ImportDeclaration>;
 
 const declareArgumentsTypes = () => [
   ts.factory.createTypeAliasDeclaration(
@@ -635,9 +676,18 @@ const declareCallFunction = () =>
     )
   );
 
-type GqlScalarToTs = Array<{ gql: string; ts: string }>;
+type GqlScalarToTs = { gql: string; ts: string };
 
-export const schemaToClient = (schema: DocumentNode) => {
+export type ScalarType = { path: string; name?: string } | { name: string };
+
+type Options = {
+  scalarTypes: Record<string, ScalarType>;
+};
+
+export const schemaToClient = (
+  schema: DocumentNode,
+  { scalarTypes }: Options
+) => {
   const queries = schema.definitions.find(
     (node) =>
       node.kind === Kind.OBJECT_TYPE_DEFINITION && node.name.value === "Query"
@@ -648,14 +698,11 @@ export const schemaToClient = (schema: DocumentNode) => {
       node.name.value === "Mutation"
   ) as ObjectTypeDefinitionNode | undefined;
 
-  // TODO: Make the user provide TS types for their custom scalars
-  // const scalars = (
-  //   schema.definitions.filter(
-  //     (node) => node.kind === Kind.SCALAR_TYPE_DEFINITION
-  //   ) as Array<ScalarTypeDefinitionNode>
-  // ).concat();
+  const customScalars = schema.definitions.filter(
+    (node) => node.kind === Kind.SCALAR_TYPE_DEFINITION
+  ) as Array<ScalarTypeDefinitionNode>;
 
-  const baseScalars: GqlScalarToTs = [
+  const baseScalars: Array<GqlScalarToTs> = [
     { gql: "Int", ts: "number" },
     { gql: "Float", ts: "number" },
     { gql: "String", ts: "string" },
@@ -663,14 +710,31 @@ export const schemaToClient = (schema: DocumentNode) => {
     { gql: "ID", ts: "string" },
   ];
 
+  const scalars: Array<GqlScalarToTs> = baseScalars.concat(
+    customScalars.map((scalar) => {
+      const type = scalarTypes[scalar.name.value];
+
+      if (!type) {
+        // TODO: Write a nicer, more detailed error, with steps to solve
+        throw `No type for scalar ${scalar.name.value}.`;
+      }
+
+      return {
+        gql: scalar.name.value,
+        ts: type.name || scalar.name.value,
+      };
+    })
+  );
+
   return ts.factory.createNodeArray([
+    ...declareScalarTypesImport(scalarTypes, customScalars),
     ...declareArgumentsTypes(),
     declareFieldsType(),
     declareFieldsToQueryFunction(),
     declareArgsToGqlFunction(),
     declareVariablesToArgsFunction(),
     declareCallFunction(),
-    ...gqlDefinitionsToTsDeclarations(schema, baseScalars),
+    ...gqlDefinitionsToTsDeclarations(schema, scalars),
     ts.factory.createExportDefault(
       createArrowFunction(
         [createParameterDeclaration("graphqlServerUrl", "string")],
@@ -680,7 +744,7 @@ export const schemaToClient = (schema: DocumentNode) => {
                 ts.factory.createPropertyAssignment(
                   "query",
                   ts.factory.createObjectLiteralExpression(
-                    gqlQueriesToTsFunctionDefinitions(queries, baseScalars),
+                    gqlQueriesToTsFunctionDefinitions(queries, scalars),
                     true
                   )
                 ),
