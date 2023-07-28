@@ -7,6 +7,7 @@ import {
   InputValueDefinitionNode,
   InputObjectTypeDefinitionNode,
   ScalarTypeDefinitionNode,
+  EnumTypeDefinitionNode,
 } from "graphql";
 import ts, {
   PropertyAssignment,
@@ -24,22 +25,30 @@ import {
   createVariableDeclaration,
 } from "./helpers.ts";
 
+const isEnum = (type: string, enums: Array<EnumTypeDefinitionNode>): boolean =>
+  enums.some((e) => e.name.value === type);
+
 const isGqlTypeOptional = (type: TypeNode): boolean =>
   type.kind !== Kind.NON_NULL_TYPE;
 
 const gqlTypeToTsString = (
   type: TypeNode,
   scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>,
   suffix?: string
 ): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE: {
       const tsType = scalars.find(({ gql }) => gql === type.name.value);
-      return tsType ? tsType.ts : `${type.name.value}${suffix || ""}`;
+      return tsType
+        ? tsType.ts
+        : `${type.name.value}${
+            isEnum(type.name.value, enums) ? "" : suffix || ""
+          }`;
     }
     case Kind.LIST_TYPE:
     case Kind.NON_NULL_TYPE:
-      return gqlTypeToTsString(type.type, scalars, suffix);
+      return gqlTypeToTsString(type.type, scalars, enums, suffix);
   }
 };
 
@@ -57,7 +66,8 @@ const gqlTypeToString = (type: TypeNode): string => {
 
 const gqlArgumentsToTsParameterDeclaration = (
   args: readonly InputValueDefinitionNode[],
-  scalars: Array<GqlScalarToTs>
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
 ) => [
   createParameterDeclaration(
     "args",
@@ -70,7 +80,7 @@ const gqlArgumentsToTsParameterDeclaration = (
             ? ts.factory.createToken(SyntaxKind.QuestionToken)
             : undefined,
           ts.factory.createTypeReferenceNode(
-            gqlTypeToTsString(arg.type, scalars)
+            gqlTypeToTsString(arg.type, scalars, enums)
           )
         )
       )
@@ -90,7 +100,8 @@ const gqlArgumentsToTsArgumentTypesDeclaration = (
 
 const gqlQueriesToTsFunctionDefinitions = (
   queries: ObjectTypeDefinitionNode,
-  scalars: Array<GqlScalarToTs>
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
 ): Array<PropertyAssignment> =>
   (queries.fields || []).map((field) =>
     ts.factory.createPropertyAssignment(
@@ -99,11 +110,15 @@ const gqlQueriesToTsFunctionDefinitions = (
         [
           createParameterDeclaration(
             "query",
-            gqlTypeToTsString(field.type, scalars, "Query")
+            gqlTypeToTsString(field.type, scalars, enums, "Query")
           ),
         ].concat(
           field.arguments && field.arguments.length > 0
-            ? gqlArgumentsToTsParameterDeclaration(field.arguments, scalars)
+            ? gqlArgumentsToTsParameterDeclaration(
+                field.arguments,
+                scalars,
+                enums
+              )
             : []
         ),
         createCallExpression(
@@ -130,11 +145,13 @@ const gqlQueriesToTsFunctionDefinitions = (
 const gqlTypeToTsLiteralNode = (
   type: TypeNode,
   name: string,
-  scalars: Array<GqlScalarToTs>
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
 ): LiteralTypeNode | TypeLiteralNode => {
   switch (type.kind) {
     case Kind.NAMED_TYPE:
-      return scalars.some((scalar) => scalar.gql === type.name.value)
+      return scalars.some((scalar) => scalar.gql === type.name.value) ||
+        isEnum(type.name.value, enums)
         ? ts.factory.createLiteralTypeNode(ts.factory.createStringLiteral(name))
         : ts.factory.createTypeLiteralNode([
             ts.factory.createPropertySignature(
@@ -146,67 +163,91 @@ const gqlTypeToTsLiteralNode = (
           ]);
     case Kind.LIST_TYPE:
     case Kind.NON_NULL_TYPE:
-      return gqlTypeToTsLiteralNode(type.type, name, scalars);
+      return gqlTypeToTsLiteralNode(type.type, name, scalars, enums);
   }
 };
 
 const gqlFieldToTsLiteralNode = (
   field: FieldDefinitionNode,
-  scalars: Array<GqlScalarToTs>
-) => gqlTypeToTsLiteralNode(field.type, field.name.value, scalars);
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) => gqlTypeToTsLiteralNode(field.type, field.name.value, scalars, enums);
 
 const gqlDefinitionsToTsDeclarations = (
   schema: DocumentNode,
-  scalars: Array<GqlScalarToTs>
-) =>
-  (
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) => {
+  const types = (
     schema.definitions.filter(
       (node) =>
         node.kind === Kind.OBJECT_TYPE_DEFINITION &&
         // We don't expose these types
         !["Query", "Mutation"].includes(node.name.value)
     ) as Array<ObjectTypeDefinitionNode>
-  )
-    .map((node) =>
-      ts.factory.createTypeAliasDeclaration(
-        [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
-        ts.factory.createIdentifier(`${node.name.value}Query`),
-        undefined,
-        ts.factory.createArrayTypeNode(
-          ts.factory.createUnionTypeNode(
-            (node.fields || []).map((field) =>
-              gqlFieldToTsLiteralNode(field, scalars)
+  ).map((node) =>
+    ts.factory.createTypeAliasDeclaration(
+      [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
+      ts.factory.createIdentifier(
+        `${node.name.value}${isEnum(node.name.value, enums) ? "" : "Query"}`
+      ),
+      undefined,
+      ts.factory.createArrayTypeNode(
+        ts.factory.createUnionTypeNode(
+          (node.fields || []).map((field) =>
+            gqlFieldToTsLiteralNode(field, scalars, enums)
+          )
+        )
+      )
+    )
+  );
+
+  const inputs = (
+    schema.definitions.filter(
+      (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION
+    ) as Array<InputObjectTypeDefinitionNode>
+  ).map((node) =>
+    ts.factory.createTypeAliasDeclaration(
+      [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
+      ts.factory.createIdentifier(node.name.value),
+      undefined,
+      ts.factory.createTypeLiteralNode(
+        (node.fields || []).map((field) =>
+          // TODO: Add handling of nested objects
+          ts.factory.createPropertySignature(
+            undefined,
+            ts.factory.createStringLiteral(field.name.value),
+            undefined,
+            ts.factory.createTypeReferenceNode(
+              gqlTypeToTsString(field.type, scalars, enums)
             )
           )
         )
       )
     )
-    .concat(
-      (
-        schema.definitions.filter(
-          (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION
-        ) as Array<InputObjectTypeDefinitionNode>
-      ).map((node) =>
-        ts.factory.createTypeAliasDeclaration(
-          [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
-          ts.factory.createIdentifier(node.name.value),
-          undefined,
-          ts.factory.createTypeLiteralNode(
-            (node.fields || []).map((field) =>
-              // TODO: Add handling of nested objects
-              ts.factory.createPropertySignature(
-                undefined,
-                ts.factory.createStringLiteral(field.name.value),
-                undefined,
-                ts.factory.createTypeReferenceNode(
-                  gqlTypeToTsString(field.type, scalars)
-                )
-              )
-            )
+  );
+
+  const enumerations = (
+    schema.definitions.filter(
+      (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
+    ) as Array<EnumTypeDefinitionNode>
+  ).map((node) =>
+    ts.factory.createTypeAliasDeclaration(
+      [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
+      ts.factory.createIdentifier(node.name.value),
+      undefined,
+      ts.factory.createUnionTypeNode(
+        (node.values || []).map((value) =>
+          ts.factory.createLiteralTypeNode(
+            ts.factory.createStringLiteral(value.name.value)
           )
         )
       )
-    );
+    )
+  );
+
+  return [...types, ...inputs, ...enumerations];
+};
 
 const declareScalarTypesImport = (
   scalarTypes: Record<string, ScalarType>,
@@ -727,6 +768,10 @@ export const schemaToClient = (
     })
   );
 
+  const enums = schema.definitions.filter(
+    (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
+  ) as Array<EnumTypeDefinitionNode>;
+
   return ts.factory.createNodeArray([
     ...declareScalarTypesImport(scalarTypes, customScalars),
     ...declareArgumentsTypes(),
@@ -735,7 +780,7 @@ export const schemaToClient = (
     declareArgsToGqlFunction(),
     declareVariablesToArgsFunction(),
     declareCallFunction(),
-    ...gqlDefinitionsToTsDeclarations(schema, scalars),
+    ...gqlDefinitionsToTsDeclarations(schema, scalars, enums),
     createVariableDeclaration(
       "enodia",
       createArrowFunction(
@@ -746,7 +791,7 @@ export const schemaToClient = (
                 ts.factory.createPropertyAssignment(
                   "query",
                   ts.factory.createObjectLiteralExpression(
-                    gqlQueriesToTsFunctionDefinitions(queries, scalars),
+                    gqlQueriesToTsFunctionDefinitions(queries, scalars, enums),
                     true
                   )
                 ),
