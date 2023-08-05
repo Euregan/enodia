@@ -9,25 +9,18 @@ import {
   ScalarTypeDefinitionNode,
   EnumTypeDefinitionNode,
 } from "graphql";
-import ts, {
-  PropertyAssignment,
-  SyntaxKind,
-  LiteralTypeNode,
-  TypeLiteralNode,
-  Expression,
-  ImportDeclaration,
-  ParameterDeclaration,
-} from "typescript";
-import {
-  createArrowFunction,
-  createCallExpression,
-  createObjectLiteralExpression,
-  createParameterDeclaration,
-  createVariableDeclaration,
-} from "./helpers.ts";
 
-const isEnum = (type: string, enums: Array<EnumTypeDefinitionNode>): boolean =>
-  enums.some((e) => e.name.value === type);
+// Types
+
+type GqlScalarToTs = { gql: string; ts: string };
+
+// Helpers
+
+const isEnum = (
+  type: TypeNode | ObjectTypeDefinitionNode,
+  enums: Array<EnumTypeDefinitionNode>
+): boolean =>
+  "name" in type && enums.some((e) => e.name.value === type.name.value);
 
 const isScalar = (type: TypeNode, scalars: Array<GqlScalarToTs>): boolean => {
   switch (type.kind) {
@@ -43,27 +36,6 @@ const isScalar = (type: TypeNode, scalars: Array<GqlScalarToTs>): boolean => {
 const isGqlTypeOptional = (type: TypeNode): boolean =>
   type.kind !== Kind.NON_NULL_TYPE;
 
-const gqlTypeToTsString = (
-  type: TypeNode,
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>,
-  suffix?: string
-): string => {
-  switch (type.kind) {
-    case Kind.NAMED_TYPE: {
-      const tsType = scalars.find(({ gql }) => gql === type.name.value);
-      return tsType
-        ? tsType.ts
-        : `${type.name.value}${
-            isEnum(type.name.value, enums) ? "" : suffix || ""
-          }`;
-    }
-    case Kind.LIST_TYPE:
-    case Kind.NON_NULL_TYPE:
-      return gqlTypeToTsString(type.type, scalars, enums, suffix);
-  }
-};
-
 const gqlTypeToString = (type: TypeNode): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE: {
@@ -76,204 +48,10 @@ const gqlTypeToString = (type: TypeNode): string => {
   }
 };
 
-const gqlArgumentsToTsParameterDeclaration = (
-  args: readonly InputValueDefinitionNode[],
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
-) => [
-  createParameterDeclaration(
-    "args",
-    ts.factory.createTypeLiteralNode(
-      args.map((arg) =>
-        ts.factory.createPropertySignature(
-          undefined,
-          arg.name.value,
-          isGqlTypeOptional(arg.type)
-            ? ts.factory.createToken(SyntaxKind.QuestionToken)
-            : undefined,
-          ts.factory.createTypeReferenceNode(
-            gqlTypeToTsString(arg.type, scalars, enums)
-          )
-        )
-      )
-    ),
-    args.every((arg) => isGqlTypeOptional(arg.type))
-  ),
-];
+// Generators
 
-const gqlArgumentsToTsArgumentTypesDeclaration = (
-  args: readonly InputValueDefinitionNode[]
-) =>
-  createObjectLiteralExpression(
-    Object.fromEntries(
-      args.map((node) => [node.name.value, gqlTypeToString(node.type)])
-    )
-  );
-
-const gqlQueriesToTsFunctionDefinitions = (
-  queries: ObjectTypeDefinitionNode,
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
-): Array<PropertyAssignment> =>
-  (queries.fields || []).map((field) =>
-    ts.factory.createPropertyAssignment(
-      field.name.value,
-      createArrowFunction(
-        ([] as Array<ParameterDeclaration>)
-          .concat(
-            isScalar(field.type, scalars)
-              ? []
-              : [
-                  createParameterDeclaration(
-                    "query",
-                    gqlTypeToTsString(field.type, scalars, enums, "Query")
-                  ),
-                ]
-          )
-          .concat(
-            field.arguments && field.arguments.length > 0
-              ? gqlArgumentsToTsParameterDeclaration(
-                  field.arguments,
-                  scalars,
-                  enums
-                )
-              : []
-          ),
-        createCallExpression(
-          ts.factory.createIdentifier("call"),
-          (
-            [
-              ts.factory.createIdentifier("graphqlServerUrl"),
-              ts.factory.createStringLiteral(field.name.value),
-            ] as Array<Expression>
-          )
-            .concat(
-              isScalar(field.type, scalars)
-                ? [ts.factory.createNull()]
-                : [ts.factory.createIdentifier("query")]
-            )
-            .concat(
-              field.arguments && field.arguments.length > 0
-                ? [
-                    ts.factory.createIdentifier("args"),
-                    gqlArgumentsToTsArgumentTypesDeclaration(field.arguments),
-                  ]
-                : []
-            )
-        )
-      )
-    )
-  );
-
-const gqlTypeToTsLiteralNode = (
-  type: TypeNode,
-  name: string,
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
-): LiteralTypeNode | TypeLiteralNode => {
-  switch (type.kind) {
-    case Kind.NAMED_TYPE:
-      return scalars.some((scalar) => scalar.gql === type.name.value) ||
-        isEnum(type.name.value, enums)
-        ? ts.factory.createLiteralTypeNode(ts.factory.createStringLiteral(name))
-        : ts.factory.createTypeLiteralNode([
-            ts.factory.createPropertySignature(
-              undefined,
-              ts.factory.createIdentifier(name),
-              undefined,
-              ts.factory.createTypeReferenceNode(`${type.name.value}Query`)
-            ),
-          ]);
-    case Kind.LIST_TYPE:
-    case Kind.NON_NULL_TYPE:
-      return gqlTypeToTsLiteralNode(type.type, name, scalars, enums);
-  }
-};
-
-const gqlFieldToTsLiteralNode = (
-  field: FieldDefinitionNode,
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
-) => gqlTypeToTsLiteralNode(field.type, field.name.value, scalars, enums);
-
-const gqlDefinitionsToTsDeclarations = (
-  schema: DocumentNode,
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
-) => {
-  const types = (
-    schema.definitions.filter(
-      (node) =>
-        node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-        // We don't expose these types
-        !["Query", "Mutation"].includes(node.name.value)
-    ) as Array<ObjectTypeDefinitionNode>
-  ).map((node) =>
-    ts.factory.createTypeAliasDeclaration(
-      [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
-      ts.factory.createIdentifier(
-        `${node.name.value}${isEnum(node.name.value, enums) ? "" : "Query"}`
-      ),
-      undefined,
-      ts.factory.createArrayTypeNode(
-        ts.factory.createUnionTypeNode(
-          (node.fields || []).map((field) =>
-            gqlFieldToTsLiteralNode(field, scalars, enums)
-          )
-        )
-      )
-    )
-  );
-
-  const inputs = (
-    schema.definitions.filter(
-      (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION
-    ) as Array<InputObjectTypeDefinitionNode>
-  ).map((node) =>
-    ts.factory.createTypeAliasDeclaration(
-      [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
-      ts.factory.createIdentifier(node.name.value),
-      undefined,
-      ts.factory.createTypeLiteralNode(
-        (node.fields || []).map((field) =>
-          // TODO: Add handling of nested objects
-          ts.factory.createPropertySignature(
-            undefined,
-            ts.factory.createStringLiteral(field.name.value),
-            undefined,
-            ts.factory.createTypeReferenceNode(
-              gqlTypeToTsString(field.type, scalars, enums)
-            )
-          )
-        )
-      )
-    )
-  );
-
-  const enumerations = (
-    schema.definitions.filter(
-      (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
-    ) as Array<EnumTypeDefinitionNode>
-  ).map((node) =>
-    ts.factory.createTypeAliasDeclaration(
-      [ts.factory.createModifier(SyntaxKind.ExportKeyword)],
-      ts.factory.createIdentifier(node.name.value),
-      undefined,
-      ts.factory.createUnionTypeNode(
-        (node.values || []).map((value) =>
-          ts.factory.createLiteralTypeNode(
-            ts.factory.createStringLiteral(value.name.value)
-          )
-        )
-      )
-    )
-  );
-
-  return [...types, ...inputs, ...enumerations];
-};
-
-// TODO: Namespace everything so there is no duplicate types, and that no custom type overwrite the client's types
-const declareScalarTypesImport = (
+// TODO: Group imports from same file together
+const customScalarsImports = (
   scalarTypes: Record<string, ScalarType>,
   customScalars: Array<ScalarTypeDefinitionNode>
 ) =>
@@ -302,513 +80,252 @@ const declareScalarTypesImport = (
       }
 
       return "path" in type
-        ? ts.factory.createImportDeclaration(
-            undefined,
-            ts.factory.createImportClause(
-              true,
-              type.name
-                ? undefined
-                : ts.factory.createIdentifier(scalar.name.value),
-              type.name
-                ? ts.factory.createNamedImports([
-                    ts.factory.createImportSpecifier(
-                      false,
-                      undefined,
-                      ts.factory.createIdentifier(type.name)
-                    ),
-                  ])
-                : undefined
-            ),
-            ts.factory.createStringLiteral(type.path)
-          )
+        ? `import type ${type.name ? "" : scalar.name.value}${
+            type.name ? `{ ${type.name} }` : ""
+          } from '${type.path}'`
         : null;
     })
-    .filter(Boolean) as Array<ImportDeclaration>;
+    .filter(Boolean)
+    .join("\n");
 
-const declareArgumentsTypes = () => [
-  ts.factory.createTypeAliasDeclaration(
-    undefined,
-    ts.factory.createIdentifier("Arguments"),
-    undefined,
-    ts.factory.createUnionTypeNode([
-      ts.factory.createTypeReferenceNode("string"),
-      ts.factory.createTypeReferenceNode("number"),
-      ts.factory.createTypeReferenceNode("boolean"),
-      ts.factory.createTypeReferenceNode("null"),
-      ts.factory.createTypeLiteralNode([
-        ts.factory.createPropertySignature(
-          undefined,
-          ts.factory.createComputedPropertyName(
-            ts.factory.createBinaryExpression(
-              ts.factory.createIdentifier("K"),
-              ts.factory.createToken(SyntaxKind.InKeyword),
-              ts.factory.createIdentifier("string")
-            )
-          ),
-          undefined,
-          ts.factory.createTypeReferenceNode("Arguments")
-        ),
-      ]),
-      ts.factory.createTypeReferenceNode("Array", [
-        ts.factory.createTypeReferenceNode("Arguments"),
-      ]),
-    ])
-  ),
-  ts.factory.createTypeAliasDeclaration(
-    undefined,
-    ts.factory.createIdentifier("ArgumentTypes"),
-    undefined,
-    ts.factory.createTypeReferenceNode("Record", [
-      ts.factory.createTypeReferenceNode("string"),
-      ts.factory.createTypeReferenceNode("string"),
-    ])
-  ),
-];
+const types = () =>
+  [
+    "type Arguments = string | number | boolean | null | {",
+    "    [K in string]: Arguments;",
+    "} | Array<Arguments>;",
+    "",
+    "type ArgumentTypes = Record<string, string>;",
+    "",
+    "type Fields = null | (string | ({",
+    "    $args?: Arguments;",
+    "} & Record<string, Fields>))[];",
+  ].join("\n");
 
-const declareFieldsType = () =>
-  ts.factory.createTypeAliasDeclaration(
-    undefined,
-    ts.factory.createIdentifier("Fields"),
-    undefined,
-    ts.factory.createUnionTypeNode([
-      ts.factory.createLiteralTypeNode(ts.factory.createNull()),
-      ts.factory.createArrayTypeNode(
-        ts.factory.createUnionTypeNode([
-          ts.factory.createTypeReferenceNode("string"),
-          ts.factory.createIntersectionTypeNode([
-            ts.factory.createTypeLiteralNode([
-              ts.factory.createPropertySignature(
-                undefined,
-                ts.factory.createIdentifier("$args"),
-                ts.factory.createToken(SyntaxKind.QuestionToken),
-                ts.factory.createTypeReferenceNode("Arguments")
-              ),
-            ]),
-            ts.factory.createTypeReferenceNode("Record", [
-              ts.factory.createTypeReferenceNode("string"),
-              ts.factory.createTypeReferenceNode("Fields"),
-            ]),
-          ]),
-        ])
-      ),
-    ])
-  );
+const fieldsToQuery = () =>
+  [
+    "const fieldsToQuery = (query: Fields): string => {",
+    "    if (query === null) {",
+    "        return '';",
+    "    }",
+    "",
+    "    const scalars = query.filter(field => typeof field === 'string') as Array<string>;",
+    "    const objects = query.filter(field => typeof field !== 'string') as Array<Record<string, Fields>>;",
+    "",
+    "    return `{${scalars.join('\\n')}\\n${objects.map(object => Object.entries(object).map(([key, value]) => `${key} ${fieldsToQuery(value)}`)).join('\\n')}\\n}`;",
+    "}",
+  ].join("\n");
 
-const declareFieldsToQueryFunction = () =>
-  createVariableDeclaration(
-    "fieldsToQuery",
-    createArrowFunction(
-      [createParameterDeclaration("query", "Fields")],
-      ts.factory.createBlock(
-        [
-          ts.factory.createIfStatement(
-            ts.factory.createBinaryExpression(
-              ts.factory.createIdentifier("query"),
-              ts.factory.createToken(SyntaxKind.EqualsEqualsEqualsToken),
-              ts.factory.createNull()
-            ),
-            ts.factory.createBlock([
-              ts.factory.createReturnStatement(
-                ts.factory.createStringLiteral("")
-              ),
-            ])
-          ),
-          ts.factory.createVariableStatement(
-            undefined,
-            createVariableDeclaration(
-              "scalars",
-              ts.factory.createAsExpression(
-                createCallExpression(
-                  ts.factory.createPropertyAccessExpression(
-                    ts.factory.createIdentifier("query"),
-                    "filter"
-                  ),
-                  [
-                    createArrowFunction(
-                      [createParameterDeclaration("field")],
-                      ts.factory.createBinaryExpression(
-                        ts.factory.createTypeOfExpression(
-                          ts.factory.createIdentifier("field")
-                        ),
-                        SyntaxKind.EqualsEqualsEqualsToken,
-                        ts.factory.createStringLiteral("string")
-                      )
-                    ),
-                  ]
-                ),
-                ts.factory.createTypeReferenceNode("Array", [
-                  ts.factory.createTypeReferenceNode("string"),
-                ])
-              )
-            )
-          ),
-          ts.factory.createVariableStatement(
-            undefined,
-            createVariableDeclaration(
-              "objects",
-              ts.factory.createAsExpression(
-                createCallExpression(
-                  ts.factory.createPropertyAccessExpression(
-                    ts.factory.createIdentifier("query"),
-                    "filter"
-                  ),
-                  [
-                    createArrowFunction(
-                      [createParameterDeclaration("field")],
-                      ts.factory.createBinaryExpression(
-                        ts.factory.createTypeOfExpression(
-                          ts.factory.createIdentifier("field")
-                        ),
-                        SyntaxKind.ExclamationEqualsEqualsToken,
-                        ts.factory.createStringLiteral("string")
-                      )
-                    ),
-                  ]
-                ),
-                ts.factory.createTypeReferenceNode("Array", [
-                  ts.factory.createTypeReferenceNode("Record", [
-                    ts.factory.createTypeReferenceNode("string"),
-                    ts.factory.createTypeReferenceNode("Fields"),
-                  ]),
-                ])
-              )
-            )
-          ),
-          ts.factory.createReturnStatement(
-            ts.factory.createTemplateExpression(
-              ts.factory.createTemplateHead("{"),
-              [
-                ts.factory.createTemplateSpan(
-                  createCallExpression(
-                    ts.factory.createPropertyAccessExpression(
-                      ts.factory.createIdentifier("scalars"),
-                      "join"
-                    ),
-                    [ts.factory.createStringLiteral("\n")]
-                  ),
-                  ts.factory.createTemplateMiddle("\n")
-                ),
-                ts.factory.createTemplateSpan(
-                  createCallExpression(
-                    ts.factory.createPropertyAccessExpression(
-                      createCallExpression(
-                        ts.factory.createPropertyAccessExpression(
-                          ts.factory.createIdentifier("objects"),
-                          "map"
-                        ),
-                        [
-                          createArrowFunction(
-                            [createParameterDeclaration("object")],
-                            createCallExpression(
-                              ts.factory.createPropertyAccessExpression(
-                                createCallExpression(
-                                  ts.factory.createPropertyAccessExpression(
-                                    ts.factory.createIdentifier("Object"),
-                                    "entries"
-                                  ),
-                                  [ts.factory.createIdentifier("object")]
-                                ),
-                                "map"
-                              ),
-                              [
-                                createArrowFunction(
-                                  [
-                                    ts.factory.createParameterDeclaration(
-                                      undefined,
-                                      undefined,
-                                      ts.factory.createArrayBindingPattern([
-                                        ts.factory.createBindingElement(
-                                          undefined,
-                                          undefined,
-                                          "key"
-                                        ),
-                                        ts.factory.createBindingElement(
-                                          undefined,
-                                          undefined,
-                                          "value"
-                                        ),
-                                      ])
-                                    ),
-                                  ],
-                                  ts.factory.createTemplateExpression(
-                                    ts.factory.createTemplateHead(""),
-                                    [
-                                      ts.factory.createTemplateSpan(
-                                        ts.factory.createIdentifier("key"),
-                                        ts.factory.createTemplateMiddle(" ")
-                                      ),
-                                      ts.factory.createTemplateSpan(
-                                        createCallExpression("fieldsToQuery", [
-                                          ts.factory.createIdentifier("value"),
-                                        ]),
-                                        ts.factory.createTemplateTail("")
-                                      ),
-                                    ]
-                                  )
-                                ),
-                              ]
-                            )
-                          ),
-                        ]
-                      ),
-                      "join"
-                    ),
-                    [ts.factory.createStringLiteral("\n")]
-                  ),
-                  ts.factory.createTemplateTail("\n}")
-                ),
-              ]
-            )
-          ),
-        ],
-        true
-      ),
-      ts.factory.createTypeReferenceNode("string")
-    )
-  );
+const argsToGql = () =>
+  [
+    "const argsToGql = (argTypes: ArgumentTypes, args: Record<string, Arguments>) =>",
+    "  Object.keys(args)",
+    "    .map((key) => `$${key}: ${argTypes[key]}`)",
+    "    .join('\\n');",
+  ].join("\n");
 
-const declareArgsToGqlFunction = () =>
-  createVariableDeclaration(
-    "argsToGql",
-    createArrowFunction(
-      [
-        createParameterDeclaration("argTypes", "ArgumentTypes"),
-        createParameterDeclaration(
-          "args",
-          ts.factory.createTypeReferenceNode("Record", [
-            ts.factory.createTypeReferenceNode("string"),
-            ts.factory.createTypeReferenceNode("Arguments"),
-          ])
-        ),
-      ],
-      createCallExpression(
-        ts.factory.createPropertyAccessExpression(
-          createCallExpression(
-            ts.factory.createPropertyAccessExpression(
-              createCallExpression(
-                ts.factory.createPropertyAccessExpression(
-                  ts.factory.createIdentifier("Object"),
-                  "keys"
-                ),
-                [ts.factory.createIdentifier("args")]
-              ),
-              "map"
-            ),
-            [
-              createArrowFunction(
-                [createParameterDeclaration("key")],
-                ts.factory.createTemplateExpression(
-                  ts.factory.createTemplateHead("$"),
-                  [
-                    ts.factory.createTemplateSpan(
-                      ts.factory.createIdentifier("key"),
-                      ts.factory.createTemplateMiddle(": ")
-                    ),
-                    ts.factory.createTemplateSpan(
-                      ts.factory.createElementAccessExpression(
-                        ts.factory.createIdentifier("argTypes"),
-                        ts.factory.createIdentifier("key")
-                      ),
+const variablesToArgs = () =>
+  [
+    "const variablesToArgs = (args: Record<string, Arguments>) =>",
+    "  Object.keys(args)",
+    "    .map((key) => `${key}: $${key}`)",
+    "    .join('\\n');",
+  ].join("\n");
 
-                      ts.factory.createTemplateTail("")
-                    ),
-                  ]
-                )
-              ),
-            ]
-          ),
-          "join"
-        ),
-        [ts.factory.createStringLiteral("\n")]
-      )
-    )
-  );
+const call = () =>
+  [
+    "const call = (",
+    "  graphqlServerUrl: string,",
+    "  query: string,",
+    "  returns: Fields,",
+    "  args?: Record<string, Arguments>,",
+    "  argTypes?: ArgumentTypes",
+    ") =>",
+    "  fetch(graphqlServerUrl, {",
+    "    method: 'POST',",
+    "    body: JSON.stringify({",
+    "      operationName: query,",
+    "      query: `query ${query}${",
+    "        argTypes && args ? `(${argsToGql(argTypes, args)})` : ''",
+    "      } {\\n ${query}${",
+    "        args ? `(${variablesToArgs(args)})` : ''",
+    "      }\\n ${fieldsToQuery(returns)} }`,",
+    "      variables: args,",
+    "    }),",
+    "    headers: {",
+    "      'Content-Type': 'application/json',",
+    "    },",
+    "  }).then((response: Response) => response.json());",
+  ].join("\n");
 
-const declareVariablesToArgsFunction = () =>
-  createVariableDeclaration(
-    "variablesToArgs",
-    createArrowFunction(
-      [
-        createParameterDeclaration(
-          "args",
-          ts.factory.createTypeReferenceNode("Record", [
-            ts.factory.createTypeReferenceNode("string"),
-            ts.factory.createTypeReferenceNode("Arguments"),
-          ])
-        ),
-      ],
-      createCallExpression(
-        ts.factory.createPropertyAccessExpression(
-          createCallExpression(
-            ts.factory.createPropertyAccessExpression(
-              createCallExpression(
-                ts.factory.createPropertyAccessExpression(
-                  ts.factory.createIdentifier("Object"),
-                  "keys"
-                ),
-                [ts.factory.createIdentifier("args")]
-              ),
-              "map"
-            ),
-            [
-              createArrowFunction(
-                [createParameterDeclaration("key")],
-                ts.factory.createTemplateExpression(
-                  ts.factory.createTemplateHead(""),
-                  [
-                    ts.factory.createTemplateSpan(
-                      ts.factory.createIdentifier("key"),
-                      ts.factory.createTemplateMiddle(": $")
-                    ),
-                    ts.factory.createTemplateSpan(
-                      ts.factory.createIdentifier("key"),
-                      ts.factory.createTemplateTail("")
-                    ),
-                  ]
-                )
-              ),
-            ]
-          ),
-          "join"
-        ),
-        [ts.factory.createStringLiteral("\n")]
-      )
-    )
-  );
-
-const declareCallFunction = () =>
-  createVariableDeclaration(
-    "call",
-    createArrowFunction(
-      [
-        createParameterDeclaration("graphqlServerUrl", "string"),
-        createParameterDeclaration("query", "string"),
-        createParameterDeclaration("returns", "Fields"),
-        createParameterDeclaration(
-          "args",
-          ts.factory.createTypeReferenceNode("Record", [
-            ts.factory.createTypeReferenceNode("string"),
-            ts.factory.createTypeReferenceNode("Arguments"),
-          ]),
-          true
-        ),
-        createParameterDeclaration("argTypes", "ArgumentTypes", true),
-      ],
-      ts.factory.createCallChain(
-        ts.factory.createPropertyAccessChain(
-          createCallExpression("fetch", [
-            "graphqlServerUrl",
-            createObjectLiteralExpression({
-              method: "POST",
-              body: createCallExpression("JSON.stringify", [
-                createObjectLiteralExpression({
-                  operationName: ts.factory.createIdentifier("query"),
-                  query: ts.factory.createTemplateExpression(
-                    ts.factory.createTemplateHead("query "),
-                    [
-                      ts.factory.createTemplateSpan(
-                        ts.factory.createIdentifier("query"),
-                        ts.factory.createTemplateMiddle("")
-                      ),
-                      ts.factory.createTemplateSpan(
-                        ts.factory.createConditionalExpression(
-                          ts.factory.createBinaryExpression(
-                            ts.factory.createIdentifier("argTypes"),
-                            ts.factory.createToken(
-                              SyntaxKind.AmpersandAmpersandToken
-                            ),
-                            ts.factory.createIdentifier("args")
-                          ),
-                          ts.factory.createToken(SyntaxKind.QuestionToken),
-                          ts.factory.createTemplateExpression(
-                            ts.factory.createTemplateHead("("),
-                            [
-                              ts.factory.createTemplateSpan(
-                                createCallExpression("argsToGql", [
-                                  "argTypes",
-                                  "args",
-                                ]),
-                                ts.factory.createTemplateTail(")")
-                              ),
-                            ]
-                          ),
-                          ts.factory.createToken(SyntaxKind.ColonToken),
-                          ts.factory.createStringLiteral("")
-                        ),
-                        ts.factory.createTemplateMiddle(" {\n ")
-                      ),
-                      ts.factory.createTemplateSpan(
-                        ts.factory.createIdentifier("query"),
-                        ts.factory.createTemplateMiddle("")
-                      ),
-                      ts.factory.createTemplateSpan(
-                        ts.factory.createConditionalExpression(
-                          ts.factory.createIdentifier("args"),
-                          ts.factory.createToken(SyntaxKind.QuestionToken),
-                          ts.factory.createTemplateExpression(
-                            ts.factory.createTemplateHead("("),
-                            [
-                              ts.factory.createTemplateSpan(
-                                createCallExpression("variablesToArgs", [
-                                  "args",
-                                ]),
-                                ts.factory.createTemplateTail(")")
-                              ),
-                            ]
-                          ),
-                          ts.factory.createToken(SyntaxKind.ColonToken),
-                          ts.factory.createStringLiteral("")
-                        ),
-                        ts.factory.createTemplateMiddle("\n ")
-                      ),
-                      ts.factory.createTemplateSpan(
-                        createCallExpression("fieldsToQuery", [
-                          ts.factory.createIdentifier("returns"),
-                        ]),
-                        ts.factory.createTemplateTail(" }")
-                      ),
-                    ]
-                  ),
-                  variables: ts.factory.createIdentifier("args"),
-                }),
-              ]),
-              headers: {
-                "Content-Type": "application/json",
-              },
-            }),
-          ]),
-          undefined,
-          "then"
-        ),
-        undefined,
-        [],
-        [
-          createArrowFunction(
-            [createParameterDeclaration("response", "Response")],
-            createCallExpression(
-              ts.factory.createPropertyAccessExpression(
-                ts.factory.createIdentifier("response"),
-                "json"
-              ),
-              []
-            )
-          ),
-        ]
-      )
-    )
-  );
-
-type GqlScalarToTs = { gql: string; ts: string };
-
-export type ScalarType = { path: string; name?: string } | { name: string };
-
-type Options = {
-  scalarTypes: Record<string, ScalarType>;
+const fieldQuery = (
+  type: TypeNode,
+  name: string,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+): string => {
+  switch (type.kind) {
+    case Kind.NAMED_TYPE:
+      return isScalar(type, scalars) || isEnum(type, enums)
+        ? `'${name}'`
+        : `{ ${name}: ${type.name.value}Query }`;
+    case Kind.LIST_TYPE:
+    case Kind.NON_NULL_TYPE:
+      return fieldQuery(type.type, name, scalars, enums);
+  }
 };
 
-export const schemaToClient = (
+const typeToString = (
+  type: TypeNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>,
+  suffix?: string
+): string => {
+  switch (type.kind) {
+    case Kind.NAMED_TYPE: {
+      const tsType = scalars.find(({ gql }) => gql === type.name.value);
+      return tsType
+        ? tsType.ts
+        : `${type.name.value}${isEnum(type, enums) ? "" : suffix || ""}`;
+    }
+    case Kind.LIST_TYPE:
+    case Kind.NON_NULL_TYPE:
+      return typeToString(type.type, scalars, enums, suffix);
+  }
+};
+
+const queriesTypes = (
   schema: DocumentNode,
-  { scalarTypes }: Options
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) => {
+  const types = (
+    schema.definitions.filter(
+      (node) =>
+        node.kind === Kind.OBJECT_TYPE_DEFINITION &&
+        // We don't expose these types
+        !["Query", "Mutation"].includes(node.name.value)
+    ) as Array<ObjectTypeDefinitionNode>
+  )
+    .map((node) =>
+      [
+        `export type ${node.name.value}${
+          isEnum(node, enums) ? "" : "Query"
+        } = Array<`,
+      ]
+        // TODO: Handle args at the field level
+        .concat(
+          (node.fields || []).map(
+            (field) =>
+              `  | ${fieldQuery(field.type, field.name.value, scalars, enums)}`
+          )
+        )
+        .concat([">;"])
+        .join("\n")
+    )
+    .join("\n\n");
+
+  const inputs = (
+    schema.definitions.filter(
+      (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION
+    ) as Array<InputObjectTypeDefinitionNode>
+  )
+    .map((node) =>
+      [`export type ${node.name.value} = {`]
+        .concat(
+          (node.fields || []).map(
+            (field) =>
+              `  ${field.name.value}: ${typeToString(
+                field.type,
+                scalars,
+                enums
+              )}`
+          )
+        )
+        .concat(["};"])
+        .join("\n")
+    )
+    .join("\n\n");
+
+  const enumerations = (
+    schema.definitions.filter(
+      (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
+    ) as Array<EnumTypeDefinitionNode>
+  )
+    .map((node) =>
+      [`export type ${node.name.value} = `]
+        .concat(
+          (node.values || []).map(
+            (value, index, values) =>
+              `  | '${value.name.value}'${
+                index === values.length - 1 ? ";" : ""
+              }`
+          )
+        )
+        .join("\n")
+    )
+    .join("\n\n");
+
+  return [types, inputs, enumerations].join("\n\n");
+};
+
+const queryFunctionParameters = (
+  field: FieldDefinitionNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) =>
+  [
+    !isScalar(field.type, scalars)
+      ? `query: ${typeToString(field.type, scalars, enums, "Query")}`
+      : null,
+    field.arguments && field.arguments.length > 0
+      ? `args${
+          field.arguments.every((arg) => isGqlTypeOptional(arg.type)) ? "?" : ""
+        }: { ${field.arguments
+          .map(
+            (arg) =>
+              `${arg.name.value}${
+                isGqlTypeOptional(arg.type) ? "?" : ""
+              }: ${typeToString(arg.type, scalars, enums)}`
+          )
+          .join(", ")} }`
+      : null,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
+const gqlArgTypes = (args: readonly InputValueDefinitionNode[]) =>
+  args
+    .map((node) => `${node.name.value}: '${gqlTypeToString(node.type)}'`)
+    .join(", ");
+
+const queryFunctions = (
+  queries: ObjectTypeDefinitionNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+): string =>
+  (queries.fields || [])
+    .map((field) =>
+      [
+        `    ${field.name.value}: (${queryFunctionParameters(
+          field,
+          scalars,
+          enums
+        )}) => call(graphqlServerUrl, '${field.name.value}', ${
+          !isScalar(field.type, scalars) ? "query" : "null"
+        }${
+          field.arguments && field.arguments.length > 0
+            ? `, args, { ${gqlArgTypes(field.arguments)} }`
+            : ""
+        }),`,
+        // TODO: Add the dynamic return type
+      ].join("\n")
+    )
+    .join("\n");
+
+const client = (
+  schema: DocumentNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
 ) => {
   const queries = schema.definitions.find(
     (node) =>
@@ -820,6 +337,30 @@ export const schemaToClient = (
       node.name.value === "Mutation"
   ) as ObjectTypeDefinitionNode | undefined;
 
+  return (
+    // TODO: Handle custom headers (i.e. for authentication)
+    [`const enodia = (graphqlServerUrl: string) => ({`]
+      .concat(
+        queries
+          ? ["  query: {", queryFunctions(queries, scalars, enums), "  }"]
+          : []
+      )
+      // TODO: Handle mutations as well
+      .concat(mutations ? [] : [])
+      .concat(["});", "", "export default enodia"])
+      .join("\n")
+  );
+};
+
+// Client generator
+
+export type ScalarType = { path: string; name?: string } | { name: string };
+
+type Options = {
+  scalarTypes: Record<string, ScalarType>;
+};
+
+const schemaToClient = (schema: DocumentNode, { scalarTypes }: Options) => {
   const customScalars = schema.definitions.filter(
     (node) => node.kind === Kind.SCALAR_TYPE_DEFINITION
   ) as Array<ScalarTypeDefinitionNode>;
@@ -852,43 +393,16 @@ export const schemaToClient = (
     (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
   ) as Array<EnumTypeDefinitionNode>;
 
-  return ts.factory.createNodeArray([
-    ...declareScalarTypesImport(scalarTypes, customScalars),
-    ...declareArgumentsTypes(),
-    declareFieldsType(),
-    declareFieldsToQueryFunction(),
-    declareArgsToGqlFunction(),
-    declareVariablesToArgsFunction(),
-    declareCallFunction(),
-    ...gqlDefinitionsToTsDeclarations(schema, scalars, enums),
-    createVariableDeclaration(
-      "enodia",
-      createArrowFunction(
-        [createParameterDeclaration("graphqlServerUrl", "string")],
-        ts.factory.createObjectLiteralExpression(
-          (queries
-            ? [
-                ts.factory.createPropertyAssignment(
-                  "query",
-                  ts.factory.createObjectLiteralExpression(
-                    gqlQueriesToTsFunctionDefinitions(queries, scalars, enums),
-                    true
-                  )
-                ),
-              ]
-            : []
-          ).concat(
-            mutations
-              ? ts.factory.createPropertyAssignment(
-                  "mutate",
-                  createArrowFunction([], createObjectLiteralExpression({}))
-                )
-              : []
-          ),
-          true
-        )
-      )
-    ),
-    ts.factory.createExportDefault(ts.factory.createIdentifier("enodia")),
-  ]);
+  return [
+    customScalarsImports(scalarTypes, customScalars),
+    types(),
+    fieldsToQuery(),
+    argsToGql(),
+    variablesToArgs(),
+    call(),
+    queriesTypes(schema, scalars, enums),
+    client(schema, scalars, enums),
+  ].join("\n\n");
 };
+
+export default schemaToClient;

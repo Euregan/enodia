@@ -1,8 +1,7 @@
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
 import { gql } from "graphql-tag";
-import ts from "typescript";
-import { ScalarType, schemaToClient } from "./client.ts";
+import schemaToClient, { ScalarType } from "./client";
 
 console.clear();
 
@@ -20,16 +19,6 @@ const schema = gql(
     : readFile(input, "utf-8"))
 );
 console.log("✓ Fetched schema");
-
-const file = ts.createSourceFile(
-  "client.ts",
-  "",
-  ts.ScriptTarget.ESNext,
-  false,
-  ts.ScriptKind.TS
-);
-
-const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
 
 // TODO: Verify that the file actually exist, and that they do export the specified type
 const resolvedImports = Object.fromEntries(
@@ -51,10 +40,6 @@ const resolvedImports = Object.fromEntries(
 console.log("- Writing client");
 await writeFile(
   output,
-  printer.printList(
-    ts.ListFormat.MultiLine,
-    schemaToClient(schema, { scalarTypes: resolvedImports }),
-    file
-  )
+  schemaToClient(schema, { scalarTypes: resolvedImports })
 );
 console.log("✓ Wrote client");
