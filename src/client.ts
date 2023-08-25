@@ -19,15 +19,24 @@ type GqlScalarToTs = { gql: string; ts: string };
 const isEnum = (
   type: TypeNode | ObjectTypeDefinitionNode,
   enums: Array<EnumTypeDefinitionNode>
-): boolean =>
-  "name" in type && enums.some((e) => e.name.value === type.name.value);
+): boolean => {
+  switch (type.kind) {
+    case Kind.OBJECT_TYPE_DEFINITION:
+    case Kind.NAMED_TYPE:
+      return (
+        "name" in type && enums.some((e) => e.name.value === type.name.value)
+      );
+    case Kind.LIST_TYPE:
+    case Kind.NON_NULL_TYPE:
+      return isEnum(type.type, enums);
+  }
+};
 
 const isScalar = (type: TypeNode, scalars: Array<GqlScalarToTs>): boolean => {
   switch (type.kind) {
     case Kind.NAMED_TYPE:
       return scalars.some(({ gql }) => gql === type.name.value);
     case Kind.LIST_TYPE:
-      return false;
     case Kind.NON_NULL_TYPE:
       return isScalar(type.type, scalars);
   }
@@ -99,6 +108,10 @@ const types = () =>
     "type Fields = null | (string | ({",
     "    $args?: Arguments;",
     "} & Record<string, Fields>))[];",
+    "",
+    "type Prettify<T> = {",
+    "  [K in keyof T]: T[K];",
+    "} & unknown;",
   ].join("\n");
 
 const fieldsToQuery = () =>
@@ -198,7 +211,7 @@ const queriesTypes = (
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>
 ) => {
-  const types = (
+  const queries = (
     schema.definitions.filter(
       (node) =>
         node.kind === Kind.OBJECT_TYPE_DEFINITION &&
@@ -220,6 +233,75 @@ const queriesTypes = (
           )
         )
         .concat([">;"])
+        .join("\n")
+    )
+    .join("\n\n");
+
+  const types = (
+    schema.definitions.filter(
+      (node) =>
+        node.kind === Kind.OBJECT_TYPE_DEFINITION &&
+        // We don't expose these types
+        !["Query", "Mutation"].includes(node.name.value) &&
+        !isEnum(node, enums)
+    ) as Array<ObjectTypeDefinitionNode>
+  )
+    .map((node) =>
+      [`type ${node.name.value} = {`]
+        .concat(
+          (node.fields || []).map(
+            (field) =>
+              `  ${field.name.value}: ${typeToString(
+                field.type,
+                scalars,
+                enums
+              )}`
+          )
+        )
+        .concat(["};"])
+        .join("\n")
+    )
+    .join("\n\n");
+
+  const results = (
+    schema.definitions.filter(
+      (node) =>
+        node.kind === Kind.OBJECT_TYPE_DEFINITION &&
+        // We don't expose these types
+        !["Query", "Mutation"].includes(node.name.value) &&
+        !isEnum(node, enums)
+    ) as Array<ObjectTypeDefinitionNode>
+  )
+    .map((node) =>
+      [
+        `type ${node.name.value}Result<T extends ${node.name.value}Query[number]> = Prettify<{`,
+        "  [P in T extends string ? T : keyof T]:",
+      ]
+        .concat(
+          (node.fields || [])
+            .filter(
+              (field) =>
+                !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+            )
+            .map(
+              (field) =>
+                `    P extends '${field.name.value}' ? T extends { ${
+                  field.name.value
+                }: ${typeToString(
+                  field.type,
+                  scalars,
+                  enums
+                )}Query } ? ${typeToString(
+                  field.type,
+                  scalars,
+                  enums
+                )}Result<T['${field.name.value}'][number]> : never :`
+            )
+        )
+        .concat([
+          `    P extends keyof ${node.name.value} ? ${node.name.value}[P] : never`,
+          "}>;",
+        ])
         .join("\n")
     )
     .join("\n\n");
@@ -265,7 +347,7 @@ const queriesTypes = (
     )
     .join("\n\n");
 
-  return [types, inputs, enumerations].join("\n\n");
+  return [queries, types, results, inputs, enumerations].join("\n\n");
 };
 
 const queryFunctionParameters = (
@@ -274,9 +356,7 @@ const queryFunctionParameters = (
   enums: Array<EnumTypeDefinitionNode>
 ) =>
   [
-    !isScalar(field.type, scalars)
-      ? `query: ${typeToString(field.type, scalars, enums, "Query")}`
-      : null,
+    !isScalar(field.type, scalars) ? "query: Array<T>" : null,
     field.arguments && field.arguments.length > 0
       ? `args${
           field.arguments.every((arg) => isGqlTypeOptional(arg.type)) ? "?" : ""
@@ -306,18 +386,25 @@ const queryFunctions = (
   (queries.fields || [])
     .map((field) =>
       [
-        `    ${field.name.value}: (${queryFunctionParameters(
-          field,
-          scalars,
-          enums
-        )}) => call(graphqlServerUrl, '${field.name.value}', ${
+        `    ${field.name.value}: ${
+          isScalar(field.type, scalars)
+            ? ""
+            : `<T extends ${typeToString(
+                field.type,
+                scalars,
+                enums
+              )}Query[number]>`
+        }(${queryFunctionParameters(field, scalars, enums)}): Promise<${
+          isScalar(field.type, scalars)
+            ? typeToString(field.type, scalars, enums)
+            : `${typeToString(field.type, scalars, enums)}Result<T>`
+        }> => call(graphqlServerUrl, '${field.name.value}', ${
           !isScalar(field.type, scalars) ? "query" : "null"
         }${
           field.arguments && field.arguments.length > 0
             ? `, args, { ${gqlArgTypes(field.arguments)} }`
             : ""
         }),`,
-        // TODO: Add the dynamic return type
       ].join("\n")
     )
     .join("\n");

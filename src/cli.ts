@@ -5,6 +5,7 @@ import schemaToClient, { ScalarType } from "./client";
 
 console.clear();
 
+// TODO: Use Commander
 const [, , input, output] = process.argv;
 
 // TODO: Handle missing config file
