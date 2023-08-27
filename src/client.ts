@@ -378,7 +378,7 @@ const gqlArgTypes = (args: readonly InputValueDefinitionNode[]) =>
     .map((node) => `${node.name.value}: '${gqlTypeToString(node.type)}'`)
     .join(", ");
 
-const queryFunctions = (
+const queryOrMutationFunctions = (
   queries: ObjectTypeDefinitionNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>
@@ -429,11 +429,22 @@ const client = (
     [`const enodia = (graphqlServerUrl: string) => ({`]
       .concat(
         queries
-          ? ["  query: {", queryFunctions(queries, scalars, enums), "  }"]
+          ? [
+              "  query: {",
+              queryOrMutationFunctions(queries, scalars, enums),
+              `  }${mutations ? "," : ""}`,
+            ]
           : []
       )
-      // TODO: Handle mutations as well
-      .concat(mutations ? [] : [])
+      .concat(
+        mutations
+          ? [
+              "  mutation: {",
+              queryOrMutationFunctions(mutations, scalars, enums),
+              "  }",
+            ]
+          : []
+      )
       .concat(["});", "", "export default enodia"])
       .join("\n")
   );
