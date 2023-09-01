@@ -8,6 +8,7 @@
   },
   "scripts": {
     "dev": "vite-node -w src/cli.ts -- src/pokemon.graphql example/src/client.ts",
+    "test": "vitest",
     "build": "tsc && vite build"
   },
   "devDependencies": {
@@ -15,7 +16,7 @@
     "graphql-tag": "^2.12.6",
     "typescript": "^5.0.2",
     "vite": "^4.4.0",
-    "vite-node": "^0.33.0"
-  },
-  "dependencies": {}
+    "vite-node": "^0.33.0",
+    "vitest": "^0.34.3"
+  }
 }

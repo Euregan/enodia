@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
 import { gql } from "graphql-tag";
-import schemaToClient, { ScalarType } from "./client";
+import schemaToClient, { ScalarType } from "./client.ts";
 
 console.clear();
 
@@ -10,6 +10,7 @@ const [, , input, output] = process.argv;
 
 // TODO: Handle missing config file
 // TODO: Validate the config with zod
+// TODO: Make sure args are JSON serializable
 const config = (await import(path.resolve("./enodia.config.ts"))).default;
 
 console.log("- Fetching schema");
