@@ -1,9 +1,9 @@
+#!/usr/bin/env -S ts-node-script --esm --transpileOnly
+
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
 import { gql } from "graphql-tag";
 import schemaToClient, { ScalarType } from "./client.ts";
-
-console.clear();
 
 // TODO: Use Commander
 const [, , input, output] = process.argv;

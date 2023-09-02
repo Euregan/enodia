@@ -97,11 +97,7 @@ const customScalarsImports = (
     .filter(Boolean)
     .join("\n");
 
-const types = (
-  schema: DocumentNode,
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
-) =>
+const types = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) =>
   [
     "type Arguments = string | number | boolean | null | {",
     "    [K in string]: Arguments;",
@@ -663,7 +659,7 @@ const schemaToClient = (schema: DocumentNode, { scalarTypes }: Options) => {
 
   return [
     customScalarsImports(scalarTypes, customScalars),
-    types(schema, scalars, enums),
+    types(schema, enums),
     queryArgsToTypes(schema, scalars, enums),
     fieldsToQuery(),
     resultsToArgs(),
