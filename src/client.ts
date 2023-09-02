@@ -97,7 +97,11 @@ const customScalarsImports = (
     .filter(Boolean)
     .join("\n");
 
-const types = () =>
+const types = (
+  schema: DocumentNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) =>
   [
     "type Arguments = string | number | boolean | null | {",
     "    [K in string]: Arguments;",
@@ -105,35 +109,160 @@ const types = () =>
     "",
     "type ArgumentTypes = Record<string, string>;",
     "",
-    "type Fields = null | (string | ({",
-    "    $args?: Arguments;",
-    "} & Record<string, Fields>))[];",
-    "",
-    "type Prettify<T> = {",
-    "  [K in keyof T]: T[K];",
-    "} & unknown;",
-  ].join("\n");
+    "type Query = Prettify<",
+  ]
+    .concat(
+      (
+        schema.definitions.filter(
+          (node) =>
+            node.kind === Kind.OBJECT_TYPE_DEFINITION &&
+            // We don't expose these types
+            !["Query", "Mutation"].includes(node.name.value)
+        ) as Array<ObjectTypeDefinitionNode>
+      ).map(
+        (node) =>
+          `  | ${node.name.value}${isEnum(node, enums) ? "" : "Query"}[number]`
+      )
+    )
+    .concat([
+      ">;",
+      "",
+      "type Fields = null | Array<Query>;",
+      "",
+      "type Prettify<T> = {",
+      "  [K in keyof T]: T[K];",
+      "} & unknown;",
+      "",
+      "type KeysOfUnion<T> = T extends T ? keyof T: never;",
+      "",
+      "type ClientOptions = {",
+      "  fetch?: typeof fetch;",
+      "};",
+      "",
+      "type MergedUnion<T> = (T extends any ? (k: T) => void : never) extends ((k: infer I) => void) ? I : never;",
+    ])
+    .join("\n");
+
+const queryArgsToTypes = (
+  schema: DocumentNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) =>
+  ["const queryToGqlTypes = {"]
+    .concat(
+      (
+        schema.definitions.filter(
+          (node) =>
+            node.kind === Kind.OBJECT_TYPE_DEFINITION &&
+            // We don't expose these types
+            !["Query", "Mutation"].includes(node.name.value)
+        ) as Array<ObjectTypeDefinitionNode>
+      ).map(
+        (node) =>
+          `  ${node.name.value}Query: { ${(node.fields || [])
+            .filter(
+              (field) =>
+                !isEnum(field.type, enums) && !isScalar(field.type, scalars)
+            )
+            .map(
+              (field) =>
+                `${field.name.value}: { query: '${typeToString(
+                  field.type,
+                  scalars,
+                  enums,
+                  "Query"
+                )}' as const${
+                  (field.arguments || []).length > 0
+                    ? `, $args: { ${(field.arguments || [])
+                        .map(
+                          (argument) =>
+                            `${argument.name.value}: '${gqlTypeToString(
+                              argument.type
+                            )}' as const`
+                        )
+                        .join(", ")}}`
+                    : ""
+                } }`
+            )
+            .join(", ")} },`
+      )
+    )
+    .concat(["};"])
+    .join("\n");
 
 const fieldsToQuery = () =>
   [
-    "const fieldsToQuery = (query: Fields): string => {",
+    "const fieldsToQuery = (query: Fields, path: Array<string> = []): string => {",
     "    if (query === null) {",
     "        return '';",
     "    }",
     "",
     "    const scalars = query.filter(field => typeof field === 'string') as Array<string>;",
-    "    const objects = query.filter(field => typeof field !== 'string') as Array<Record<string, Fields>>;",
+    "    const objects = query.filter(field => typeof field !== 'string') as Array<Exclude<Query, string>>;",
     "",
-    "    return `{${scalars.join('\\n')}\\n${objects.map(object => Object.entries(object).map(([key, value]) => `${key} ${fieldsToQuery(value)}`)).join('\\n')}\\n}`;",
+    "    return `{\\n  ${scalars.join('\\n')}\\n${objects",
+    "      .map((field) => {",
+    "        const key = Object.keys(field).filter((key) => key !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args'>;",
+    "",
+    "        let queryField = key",
+    "",
+    "        if ('$args' in field && field.$args) {",
+    "          queryField += `(${Object.keys(field.$args)",
+    "            .map(",
+    "              (arg) =>",
+    "                `${arg}: $${path.concat([key, arg]).join('_')}`",
+    "            )",
+    "            .join('\\n')})`;",
+    "        }",
+    "",
+    "        queryField += ` ${fieldsToQuery((field as MergedUnion<typeof field>)[key], path.concat(key))}`",
+    "",
+    "        return queryField;",
+    "      })",
+    "      .join('\\n')}\\n}`;",
     "}",
+  ].join("\n");
+
+export const resultsToArgs = () =>
+  [
+    "const resultsToArgs = (query: keyof typeof queryToGqlTypes, returns: Fields, path: Array<string> = []) =>",
+    "  returns",
+    "    ? (",
+    "        returns.filter((field) => typeof field !== 'string') as Array<",
+    "          Exclude<Query, string>",
+    "        >",
+    "      )",
+    "        .map((field) => {",
+    "          const key = Object.keys(field).filter((key) => key !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args'>;",
+    "",
+    "          const queryTypes = queryToGqlTypes[query];",
+    "          const types = (queryTypes as MergedUnion<typeof queryTypes>)[key];",
+    "",
+    "          let args = '';",
+    "          if ('$args' in field && field.$args && '$args' in types) {",
+    "            args += Object.keys(field.$args)",
+    "              .map(",
+    "                (arg) =>",
+    "                  `$${path.concat([key, arg]).join('_')}: ${types.$args[arg as keyof typeof types.$args]}`",
+    "              )",
+    "              .join('\\n');",
+    "          }",
+    "",
+    "          args += resultsToArgs(types.query, (field as MergedUnion<typeof field>)[key], path.concat(key))",
+    "",
+    "          return args;",
+    "        })",
+    "        .join('\\n')",
+    "    : '';",
   ].join("\n");
 
 const argsToGql = () =>
   [
-    "const argsToGql = (argTypes: ArgumentTypes, args: Record<string, Arguments>) =>",
+    "const argsToGql = <Q extends keyof typeof queryToGqlTypes>(argTypes: ArgumentTypes, args: Record<string, Arguments>, query: Q, returns: Fields) =>",
     "  Object.keys(args)",
     "    .map((key) => `$${key}: ${argTypes[key]}`)",
-    "    .join('\\n');",
+    "    .concat(resultsToArgs(query, returns))",
+    "    .join(', ');",
   ].join("\n");
 
 const variablesToArgs = () =>
@@ -141,7 +270,36 @@ const variablesToArgs = () =>
     "const variablesToArgs = (args: Record<string, Arguments>) =>",
     "  Object.keys(args)",
     "    .map((key) => `${key}: $${key}`)",
-    "    .join('\\n');",
+    "    .join(', ');",
+  ].join("\n");
+
+const returnsToVariables = () =>
+  [
+    "const returnsToVariables = (returns: Fields, path: Array<string> = []): Record<string, Arguments> =>",
+    "  returns",
+    "    ? Object.assign({}, ...(",
+    "        returns.filter((field) => typeof field !== 'string') as Array<",
+    "          Exclude<Query, string>",
+    "        >",
+    "      )",
+    "        .map((field) => {",
+    "          const key = Object.keys(field).filter((key) => key !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args'>;",
+    "",
+    "          let args: Record<string, Arguments> = {};",
+    "          if ('$args' in field && field.$args) {",
+    "            args = Object.fromEntries(Object.entries(field.$args)",
+    "              .map(",
+    "                ([arg, value]) =>",
+    "                  [path.concat([key, arg]).join('_'), value]",
+    "              ));",
+    "          }",
+    "",
+    "          args = {...args, ...returnsToVariables((field as MergedUnion<typeof field>)[key], path.concat(key))}",
+    "",
+    "          return args;",
+    "        }))",
+    "    : {};",
+    ,
   ].join("\n");
 
 const call = () =>
@@ -150,19 +308,21 @@ const call = () =>
     "  graphqlServerUrl: string,",
     "  query: string,",
     "  returns: Fields,",
-    "  args?: Record<string, Arguments>,",
-    "  argTypes?: ArgumentTypes",
+    "  args: Record<string, Arguments> | null,",
+    "  argTypes: ArgumentTypes | null,",
+    "  queryType: keyof typeof queryToGqlTypes,",
+    "  options: ClientOptions = {}",
     ") =>",
-    "  fetch(graphqlServerUrl, {",
+    "  (options.fetch || fetch)(graphqlServerUrl, {",
     "    method: 'POST',",
     "    body: JSON.stringify({",
     "      operationName: query,",
     "      query: `query ${query}${",
-    "        argTypes && args ? `(${argsToGql(argTypes, args)})` : ''",
+    "        argTypes && args ? `(${argsToGql(argTypes, args, queryType, returns)})` : ''",
     "      } {\\n ${query}${",
     "        args ? `(${variablesToArgs(args)})` : ''",
     "      }\\n ${fieldsToQuery(returns)} }`,",
-    "      variables: args,",
+    "      variables: { ...args, ...returnsToVariables(returns) },",
     "    }),",
     "    headers: {",
     "      'Content-Type': 'application/json',",
@@ -171,21 +331,33 @@ const call = () =>
   ].join("\n");
 
 const fieldQuery = (
-  type: TypeNode,
-  name: string,
+  field: FieldDefinitionNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>
-): string => {
-  switch (type.kind) {
-    case Kind.NAMED_TYPE:
-      return isScalar(type, scalars) || isEnum(type, enums)
-        ? `'${name}'`
-        : `{ ${name}: ${type.name.value}Query }`;
-    case Kind.LIST_TYPE:
-    case Kind.NON_NULL_TYPE:
-      return fieldQuery(type.type, name, scalars, enums);
-  }
-};
+): string =>
+  isScalar(field.type, scalars) || isEnum(field.type, enums)
+    ? `'${field.name.value}'`
+    : `{ ${field.name.value}: ${typeToString(
+        field.type,
+        scalars,
+        enums,
+        "Query"
+      )}${
+        field.arguments && field.arguments.length > 0
+          ? `, $args${
+              field.arguments.every((arg) => isGqlTypeOptional(arg.type))
+                ? "?"
+                : ""
+            }: { ${field.arguments
+              .map(
+                (arg) =>
+                  `${arg.name.value}${
+                    isGqlTypeOptional(arg.type) ? "?" : ""
+                  }: ${typeToString(arg.type, scalars, enums)}`
+              )
+              .join(", ")} }`
+          : ""
+      } }`;
 
 const typeToString = (
   type: TypeNode,
@@ -225,11 +397,9 @@ const queriesTypes = (
           isEnum(node, enums) ? "" : "Query"
         } = Array<`,
       ]
-        // TODO: Handle args at the field level
         .concat(
           (node.fields || []).map(
-            (field) =>
-              `  | ${fieldQuery(field.type, field.name.value, scalars, enums)}`
+            (field) => `  | ${fieldQuery(field, scalars, enums)}`
           )
         )
         .concat([">;"])
@@ -274,7 +444,7 @@ const queriesTypes = (
   )
     .map((node) =>
       [
-        `type ${node.name.value}Result<T extends ${node.name.value}Query[number]> = Prettify<{`,
+        `type ${node.name.value}Result<T extends ${node.name.value}Query[number]> = Prettify<Omit<{`,
         "  [P in T extends string ? T : keyof T]:",
       ]
         .concat(
@@ -300,7 +470,7 @@ const queriesTypes = (
         )
         .concat([
           `    P extends keyof ${node.name.value} ? ${node.name.value}[P] : never`,
-          "}>;",
+          "}, '$args'>>;",
         ])
         .join("\n")
     )
@@ -404,7 +574,7 @@ const queryOrMutationFunctions = (
           field.arguments && field.arguments.length > 0
             ? `, args, { ${gqlArgTypes(field.arguments)} }`
             : ""
-        }),`,
+        }, '${typeToString(field.type, scalars, enums)}Query', options),`,
       ].join("\n")
     )
     .join("\n");
@@ -426,7 +596,7 @@ const client = (
 
   return (
     // TODO: Handle custom headers (i.e. for authentication)
-    [`const enodia = (graphqlServerUrl: string) => ({`]
+    [`const enodia = (graphqlServerUrl: string, options: ClientOptions) => ({`]
       .concat(
         queries
           ? [
@@ -493,10 +663,13 @@ const schemaToClient = (schema: DocumentNode, { scalarTypes }: Options) => {
 
   return [
     customScalarsImports(scalarTypes, customScalars),
-    types(),
+    types(schema, scalars, enums),
+    queryArgsToTypes(schema, scalars, enums),
     fieldsToQuery(),
+    resultsToArgs(),
     argsToGql(),
     variablesToArgs(),
+    returnsToVariables(),
     call(),
     queriesTypes(schema, scalars, enums),
     client(schema, scalars, enums),
