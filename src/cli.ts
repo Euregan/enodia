@@ -3,15 +3,39 @@
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
 import { gql } from "graphql-tag";
+import z from "zod";
 import schemaToClient, { ScalarType } from "./client.ts";
 
 // TODO: Use Commander
 const [, , input, output] = process.argv;
 
+const configSchema = z.object({
+  scalarTypes: z.record(
+    z.union([
+      z.object({
+        path: z.string(),
+        name: z.string().optional(),
+      }),
+      z.object({
+        name: z.string(),
+      }),
+    ])
+  ),
+});
+
 // TODO: Handle missing config file
-// TODO: Validate the config with zod
 // TODO: Make sure args are JSON serializable
-const config = (await import(path.resolve("./enodia.config.ts"))).default;
+const rawConfig = (await import(path.resolve("./enodia.config.ts"))).default;
+
+const validatedConfig = configSchema.safeParse(rawConfig);
+
+if (!validatedConfig.success) {
+  console.log("Your configuration file is not valid:");
+  console.log(validatedConfig.error);
+  process.exit(1);
+}
+
+const config = validatedConfig.data;
 
 console.log("- Fetching schema");
 const schema = gql(
