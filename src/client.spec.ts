@@ -12,6 +12,8 @@ beforeAll(async () => {
       type User {
         id: ID!
         name: String!
+        email: String!
+        birthday: Date
         comments(postId: ID): [Comment]!
         posts: [Post]!
       }

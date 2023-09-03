@@ -417,12 +417,11 @@ const queriesTypes = (
         .concat(
           (node.fields || []).map(
             (field) =>
-              // TODO: Type is not nullable if not mandatory
               `  ${field.name.value}: ${typeToString(
                 field.type,
                 scalars,
                 enums
-              )}`
+              )}${field.type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""}`
           )
         )
         .concat(["};"])
@@ -564,7 +563,9 @@ const queryOrMutationFunctions = (
         }(${queryFunctionParameters(field, scalars, enums)}): Promise<${
           isScalar(field.type, scalars)
             ? typeToString(field.type, scalars, enums)
-            : `${typeToString(field.type, scalars, enums)}Result<T>`
+            : `${typeToString(field.type, scalars, enums)}Result<T>${
+                field.type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""
+              }`
         }> => call(graphqlServerUrl, '${field.name.value}', ${
           !isScalar(field.type, scalars) ? "query" : "null"
         }${
