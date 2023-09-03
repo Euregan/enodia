@@ -135,7 +135,7 @@ const types = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) =>
       "  fetch?: typeof fetch;",
       "};",
       "",
-      "type MergedUnion<T> = (T extends any ? (k: T) => void : never) extends ((k: infer I) => void) ? I : never;",
+      "type MergedUnion<T> = (T extends unknown ? (k: T) => void : never) extends ((k: infer I) => void) ? I : never;",
     ])
     .join("\n");
 
@@ -254,10 +254,10 @@ export const resultsToArgs = () =>
 
 const argsToGql = () =>
   [
-    "const argsToGql = <Q extends keyof typeof queryToGqlTypes>(argTypes: ArgumentTypes, args: Record<string, Arguments>, query: Q, returns: Fields) =>",
+    "const argsToGql = (argTypes: ArgumentTypes, args: Record<string, Arguments>, query: keyof typeof queryToGqlTypes | null, returns: Fields | null) =>",
     "  Object.keys(args)",
     "    .map((key) => `$${key}: ${argTypes[key]}`)",
-    "    .concat(resultsToArgs(query, returns))",
+    "    .concat(query && returns ? resultsToArgs(query, returns) : [])",
     "    .join(', ');",
   ].join("\n");
 
@@ -306,7 +306,7 @@ const call = () =>
     "  returns: Fields,",
     "  args: Record<string, Arguments> | undefined,",
     "  argTypes: ArgumentTypes | undefined,",
-    "  queryType: keyof typeof queryToGqlTypes,",
+    "  queryType: keyof typeof queryToGqlTypes | null,",
     "  options: ClientOptions = {}",
     ") =>",
     "  (options.fetch || fetch)(graphqlServerUrl, {",
@@ -571,8 +571,11 @@ const queryOrMutationFunctions = (
           field.arguments && field.arguments.length > 0
             ? `, args, { ${gqlArgTypes(field.arguments)} }`
             : ", undefined, undefined"
-          // TODO: Fix scalars (and enums) type string
-        }, '${typeToString(field.type, scalars, enums)}Query', options),`,
+        }, ${
+          isEnum(field.type, enums) || isScalar(field.type, scalars)
+            ? "null"
+            : `'${typeToString(field.type, scalars, enums, "Query")}'`
+        }, options),`,
       ].join("\n")
     )
     .join("\n");
@@ -594,7 +597,7 @@ const client = (
 
   return (
     // TODO: Handle custom headers (i.e. for authentication)
-    [`const enodia = (graphqlServerUrl: string, options: ClientOptions) => ({`]
+    [`const enodia = (graphqlServerUrl: string, options?: ClientOptions) => ({`]
       .concat(
         queries
           ? [

@@ -1,9 +1,8 @@
 import { beforeAll, expect, test, vi } from "vitest";
 import fs from "fs/promises";
 import { gql } from "graphql-tag";
-import schemaToClient from "./client.ts";
+import schemaToClient from "./client";
 import ts from "typescript";
-import justQueries from "../generated-tests-files/justQueries.ts";
 
 beforeAll(async () => {
   const justQueries = schemaToClient(
@@ -71,10 +70,15 @@ test("validate files", () => {
   expect(errors).toHaveLength(0);
 });
 
-test("args", () => {
+test("args", async () => {
   let query = "";
   let variables = "";
+
+  const justQueries = (await import("../generated-tests-files/justQueries"))
+    .default;
+
   const client = justQueries("", {
+    // @ts-ignore
     fetch: vi.fn(async (_, { body }) => {
       query = JSON.parse(body).query;
       variables = JSON.parse(body).variables;
