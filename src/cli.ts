@@ -2,9 +2,10 @@
 
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
-import { gql } from "graphql-tag";
+import { parse } from "graphql";
 import z from "zod";
 import schemaToClient, { ScalarType } from "./client.ts";
+import fetcher from "./fetcher.ts";
 
 // TODO: Use Commander
 const [, , input, output] = process.argv;
@@ -21,11 +22,17 @@ const configSchema = z.object({
       }),
     ])
   ),
+  headers: z
+    .function()
+    .args()
+    .returns(z.promise(z.record(z.string())))
+    .optional(),
 });
 
 // TODO: Handle missing config file
 // TODO: Make sure args are JSON serializable
-const rawConfig = (await import(path.resolve("./enodia.config.ts"))).default;
+const rawConfig = (await import(path.resolve("./enodia.config.ts"))).default
+  .default;
 
 const validatedConfig = configSchema.safeParse(rawConfig);
 
@@ -38,12 +45,9 @@ if (!validatedConfig.success) {
 const config = validatedConfig.data;
 
 console.log("- Fetching schema");
-const schema = gql(
-  await (input.startsWith("http")
-    ? // @ts-ignore The types for node don't include fetch :(
-      fetch(input).then((response) => response.text())
-    : readFile(input, "utf-8"))
-);
+const schema = input.startsWith("http")
+  ? await fetcher(input, config.headers ? await config.headers() : {})
+  : parse(await readFile(input, "utf-8"));
 console.log("✓ Fetched schema");
 
 // TODO: Verify that the file actually exist, and that they do export the specified type

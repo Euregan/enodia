@@ -12,14 +12,14 @@
   },
   "devDependencies": {
     "@types/node": "^20.4.2",
-    "graphql-tag": "^2.12.6",
     "typescript": "^5.0.2",
     "vitest": "^0.34.3"
   },
   "peerDependencies": {
-    "ts-node": "10.x"
+    "ts-node": "10.9.x"
   },
   "dependencies": {
+    "graphql": "^16.8.0",
     "zod": "^3.22.2"
   }
 }

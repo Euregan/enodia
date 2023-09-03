@@ -304,8 +304,8 @@ const call = () =>
     "  graphqlServerUrl: string,",
     "  query: string,",
     "  returns: Fields,",
-    "  args: Record<string, Arguments> | null,",
-    "  argTypes: ArgumentTypes | null,",
+    "  args: Record<string, Arguments> | undefined,",
+    "  argTypes: ArgumentTypes | undefined,",
     "  queryType: keyof typeof queryToGqlTypes,",
     "  options: ClientOptions = {}",
     ") =>",
@@ -417,6 +417,7 @@ const queriesTypes = (
         .concat(
           (node.fields || []).map(
             (field) =>
+              // TODO: Type is not nullable if not mandatory
               `  ${field.name.value}: ${typeToString(
                 field.type,
                 scalars,
@@ -569,7 +570,8 @@ const queryOrMutationFunctions = (
         }${
           field.arguments && field.arguments.length > 0
             ? `, args, { ${gqlArgTypes(field.arguments)} }`
-            : ""
+            : ", undefined, undefined"
+          // TODO: Fix scalars (and enums) type string
         }, '${typeToString(field.type, scalars, enums)}Query', options),`,
       ].join("\n")
     )
