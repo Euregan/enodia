@@ -40,11 +40,17 @@ More information on this file in the [configuration section](#configuration).
 
 ### Generating the client
 
-Once your `enodia.config.ts` file is setup, you can run Enodia with the
-following command:
+Once your `enodia.config.ts` file is setup, you can run Enodia either pointing
+directly at your GraphQL schema file:
 
 ```bash
 enodia ./path/to/schema.graphql ./path/to/client.ts
+```
+
+Or by providing the URL of your GraphQL API:
+
+```bash
+enodia http://localhost:3000/graphql ./path/to/client.ts
 ```
 
 This will generate a client file at the given path. You should .gitignore the
@@ -88,3 +94,24 @@ export default {
 
 The `name` property is optional when providing a `path`, if the returned type is
 the default export of the module.
+
+### `headers`
+
+This is an async function that returns an object containing the headers to send
+to the GraphQL API when generating the client. This can be used to handle
+authentication, for example. This will not be used if you point to the GraphQL
+schema file when running the command.
+
+```typescript
+import { getToken } from "./src/auth";
+
+export default {
+  headers: async () => {
+    const token = await getToken();
+
+    return {
+      Authorization: `Bearer ${token}`,
+    };
+  },
+};
+```
