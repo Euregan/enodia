@@ -27,6 +27,12 @@ project. This file should export an object with the following properties:
 
 ```typescript
 export default {
+  // This is either the path to your graphql schema, or the URL where your API runs
+  input: "./src/graphql.schema",
+  // This the path where you want the client to be generated
+  output: "./src/graphql.ts",
+  // This is the URL of your API
+  url: "http://localhost:3000/graphql",
   scalarTypes: {
     // This is a map of scalar types in your GraphQL schema to Typescript types.
     // For example, if your GraphQL schema has a `Date` scalar type, you can map
@@ -42,17 +48,10 @@ More information on this file in the [configuration section](#configuration).
 
 ### Generating the client
 
-Once your `enodia.config.ts` file is setup, you can run Enodia either pointing
-directly at your GraphQL schema file:
+Once your `enodia.config.ts` file is setup, you can simply run Enodia:
 
 ```bash
-enodia ./path/to/schema.graphql ./path/to/client.ts
-```
-
-Or by providing the URL of your GraphQL API:
-
-```bash
-enodia http://localhost:3000/graphql ./path/to/client.ts
+npx enodia
 ```
 
 This will generate a client file at the given path. You should .gitignore the
@@ -68,6 +67,45 @@ The client has two properties, `query` and `mutation` containing functions to
 call every query and mutation your GraphQL API exposes.
 
 ## Configuration
+
+### `input`
+
+Enodia needs a GraphQL schema definition to generate a client. You can either
+use a GraphQL file:
+
+```typescript
+{
+  input: "./path/to/schema.graphql";
+}
+```
+
+Or the URL of your GraphQL API:
+
+```typescript
+{
+  input: "http://localhost:3000/graphql";
+}
+```
+
+### `output`
+
+It also needs to know where to generate the client. You need to provide a path:
+
+```typescript
+{
+  output: "./path/to/client.ts";
+}
+```
+
+### `url`
+
+Finally, it needs to know what URL to call to make the actual calls at runtime:
+
+```typescript
+{
+  url: "http://localhost:3000/graphql";
+}
+```
 
 ### `scalarTypes`
 
@@ -102,7 +140,8 @@ the default export of the module.
 This is an async function that returns an object containing the headers to send
 to the GraphQL API when generating the client. This can be used to handle
 authentication, for example. This will not be used if you point to the GraphQL
-schema file when running the command.
+schema file when running the command. **This will not be used at runtime, nor
+will it be stored in the generated client**.
 
 ```typescript
 import { getToken } from "./src/auth";
@@ -116,4 +155,15 @@ export default {
     };
   },
 };
+```
+
+### React
+
+If you want to generate hooks to use with React, simply set the `react` property
+to `true`:
+
+```typescript
+{
+  react: true;
+}
 ```

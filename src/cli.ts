@@ -8,9 +8,11 @@ import schemaToClient, { ScalarType } from "./client.ts";
 import fetcher from "./fetcher.ts";
 
 // TODO: Use Commander
-const [, , input, output] = process.argv;
 
 const configSchema = z.object({
+  input: z.string(),
+  output: z.string(),
+  url: z.string().url(),
   scalarTypes: z.record(
     z.union([
       z.object({
@@ -27,6 +29,7 @@ const configSchema = z.object({
     .args()
     .returns(z.promise(z.record(z.string())))
     .optional(),
+  react: z.boolean().optional(),
 });
 
 // TODO: Handle missing config file
@@ -45,9 +48,9 @@ if (!validatedConfig.success) {
 const config = validatedConfig.data;
 
 console.log("- Fetching schema");
-const schema = input.startsWith("http")
-  ? await fetcher(input, config.headers ? await config.headers() : {})
-  : parse(await readFile(input, "utf-8"));
+const schema = config.input.startsWith("http")
+  ? await fetcher(config.input, config.headers ? await config.headers() : {})
+  : parse(await readFile(config.input, "utf-8"));
 console.log("✓ Fetched schema");
 
 // TODO: Verify that the file actually exist, and that they do export the specified type
@@ -59,7 +62,7 @@ const resolvedImports = Object.fromEntries(
             gqlType,
             {
               // We go back one level because output points to the file output
-              path: path.relative(path.resolve(output, ".."), imp.path),
+              path: path.relative(path.resolve(config.output, ".."), imp.path),
               name: imp.name,
             },
           ]
@@ -69,7 +72,11 @@ const resolvedImports = Object.fromEntries(
 
 console.log("- Writing client");
 await writeFile(
-  output,
-  schemaToClient(schema, { scalarTypes: resolvedImports })
+  config.output,
+  schemaToClient(schema, {
+    url: config.url,
+    scalarTypes: resolvedImports,
+    withReact: config.react || false,
+  })
 );
 console.log("✓ Wrote client");

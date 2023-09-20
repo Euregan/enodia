@@ -45,19 +45,107 @@ const isScalar = (type: TypeNode, scalars: Array<GqlScalarToTs>): boolean => {
 const isGqlTypeOptional = (type: TypeNode): boolean =>
   type.kind !== Kind.NON_NULL_TYPE;
 
-const gqlTypeToString = (type: TypeNode): string => {
+const gqlTypeToGqlString = (type: TypeNode): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE: {
       return type.name.value;
     }
     case Kind.LIST_TYPE:
-      return `[${gqlTypeToString(type.type)}]`;
+      return `[${gqlTypeToGqlString(type.type)}]`;
     case Kind.NON_NULL_TYPE:
-      return `${gqlTypeToString(type.type)}!`;
+      return `${gqlTypeToGqlString(type.type)}!`;
   }
 };
 
+const gqlTypeToTsName = (
+  type: TypeNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>,
+  suffix?: string
+): string => {
+  switch (type.kind) {
+    case Kind.NAMED_TYPE: {
+      const tsType = scalars.find(({ gql }) => gql === type.name.value);
+      return tsType
+        ? tsType.ts
+        : `${type.name.value}${isEnum(type, enums) ? "" : suffix || ""}`;
+    }
+    case Kind.LIST_TYPE:
+    case Kind.NON_NULL_TYPE:
+      return gqlTypeToTsName(type.type, scalars, enums, suffix);
+  }
+};
+
+const gqlTypeToTsString = (
+  type: TypeNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>,
+  suffix?: string
+): string => {
+  switch (type.kind) {
+    case Kind.NAMED_TYPE:
+      return gqlTypeToTsName(type, scalars, enums, suffix);
+    case Kind.LIST_TYPE:
+      return `Array<${gqlTypeToTsString(type.type, scalars, enums, suffix)}>`;
+    case Kind.NON_NULL_TYPE:
+      return gqlTypeToTsString(type.type, scalars, enums, suffix);
+  }
+};
+
+const fieldsConstraint = (
+  type: TypeNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>,
+  generic = "T"
+) => `${generic} extends ${gqlTypeToTsName(type, scalars, enums)}Query[number]`;
+
+const queryResult = (
+  type: TypeNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) =>
+  isScalar(type, scalars)
+    ? gqlTypeToTsString(type, scalars, enums)
+    : `${gqlTypeToTsString(type, scalars, enums, "Result<T>")}${
+        type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""
+      }`;
+
+const argsToTsDeclaration = (
+  args: ReadonlyArray<InputValueDefinitionNode>,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>,
+  withProperty = true
+) =>
+  `${
+    withProperty
+      ? `args${args.every((arg) => isGqlTypeOptional(arg.type)) ? "?" : ""}: `
+      : ""
+  }{ ${args
+    .map(
+      (arg) =>
+        `${arg.name.value}${
+          isGqlTypeOptional(arg.type) ? "?" : ""
+        }: ${gqlTypeToTsName(arg.type, scalars, enums)}`
+    )
+    .join(", ")} }`;
+
+const getQueries = (schema: DocumentNode) =>
+  schema.definitions.find(
+    (node) =>
+      node.kind === Kind.OBJECT_TYPE_DEFINITION && node.name.value === "Query"
+  ) as ObjectTypeDefinitionNode | undefined;
+
+const getMutations = (schema: DocumentNode) =>
+  schema.definitions.find(
+    (node) =>
+      node.kind === Kind.OBJECT_TYPE_DEFINITION &&
+      node.name.value === "Mutation"
+  ) as ObjectTypeDefinitionNode | undefined;
+
 // Generators
+
+const imports = (hooks: boolean) =>
+  (hooks ? ["import { useState, useEffect } from 'react'"] : []).join("\n");
 
 // TODO: Group imports from same file together
 const customScalarsImports = (
@@ -97,7 +185,11 @@ const customScalarsImports = (
     .filter(Boolean)
     .join("\n");
 
-const types = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) =>
+const types = (
+  schema: DocumentNode,
+  enums: Array<EnumTypeDefinitionNode>,
+  react: boolean
+) =>
   [
     "type Arguments = string | number | boolean | null | {",
     "    [K in string]: Arguments;",
@@ -137,6 +229,71 @@ const types = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) =>
       "",
       "type MergedUnion<T> = (T extends unknown ? (k: T) => void : never) extends ((k: infer I) => void) ? I : never;",
     ])
+    .concat(
+      react && getQueries(schema)
+        ? [
+            "",
+            "type Error = string;",
+            "",
+            "/**",
+            " * The type returned by the query hook.",
+            " */",
+            "type QueryResult<Data> =",
+            "  /**",
+            "   * If the call is still running, then it returns a simple array",
+            "   * with `true` as the first element. The two other elements are",
+            "   * `null`.",
+            "   */",
+            "  | readonly [true, null, null]",
+            "  /**",
+            "   * If the call has errored, the array contains `false` as the",
+            "   * loading variable, then the error that happened, and finally",
+            "   * `null` for the result.",
+            "   */",
+            "  | readonly [false, Error, null]",
+            "  /**",
+            "   * If the call has come through, the array contains `false` as the",
+            "   * loading variable, `null` for the error, and finally the data",
+            "   * returned by the API.",
+            "   */",
+            "  | readonly [false, null, Data];",
+          ]
+        : []
+    )
+    .concat(
+      react && getMutations(schema)
+        ? [
+            "",
+            "/**",
+            " * The type returned by the `useMutation` hook. The first element of",
+            " * the array is always a function to call the API, as mutations should",
+            " * happen on user input. While the last data returned by the API is",
+            " * available as the last element of the array, it can also be accessed",
+            " * from the promise returned by the call function.",
+            " */",
+            "type MutationResult<Payload, Data> =",
+            "  /**",
+            "   * If the call hasn't been sent yet, or if it is running, then",
+            "   * it returns a simple array, with a boolean indicating the",
+            "   * loading state as the second element. The two last elements are",
+            "   * `null`.",
+            "   */",
+            "  | [(payload: Payload) => Promise<Data>, boolean, null, null]",
+            "  /**",
+            "   * If the call has errored, the array contains `false` as the",
+            "   * loading variable, then the error that happened, and finally",
+            "   * `null` for the result.",
+            "   */",
+            "  | [(payload: Payload) => Promise<Data>, false, Error, null]",
+            "  /**",
+            "   * If the call has come through, the array contains `false` as the",
+            "   * loading variable, `null` for the error, and finally the data",
+            "   * returned by the API.",
+            "   */",
+            "  | [(payload: Payload) => Promise<Data>, false, null, Data];",
+          ]
+        : []
+    )
     .join("\n");
 
 const queryArgsToTypes = (
@@ -162,7 +319,7 @@ const queryArgsToTypes = (
             )
             .map(
               (field) =>
-                `${field.name.value}: { query: '${typeToString(
+                `${field.name.value}: { query: '${gqlTypeToTsName(
                   field.type,
                   scalars,
                   enums,
@@ -172,7 +329,7 @@ const queryArgsToTypes = (
                     ? `, $args: { ${(field.arguments || [])
                         .map(
                           (argument) =>
-                            `${argument.name.value}: '${gqlTypeToString(
+                            `${argument.name.value}: '${gqlTypeToGqlString(
                               argument.type
                             )}' as const`
                         )
@@ -333,7 +490,7 @@ const fieldQuery = (
 ): string =>
   isScalar(field.type, scalars) || isEnum(field.type, enums)
     ? `'${field.name.value}'`
-    : `{ ${field.name.value}: ${typeToString(
+    : `{ ${field.name.value}: ${gqlTypeToTsName(
         field.type,
         scalars,
         enums,
@@ -349,30 +506,11 @@ const fieldQuery = (
                 (arg) =>
                   `${arg.name.value}${
                     isGqlTypeOptional(arg.type) ? "?" : ""
-                  }: ${typeToString(arg.type, scalars, enums)}`
+                  }: ${gqlTypeToTsName(arg.type, scalars, enums)}`
               )
               .join(", ")} }`
           : ""
       } }`;
-
-const typeToString = (
-  type: TypeNode,
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>,
-  suffix?: string
-): string => {
-  switch (type.kind) {
-    case Kind.NAMED_TYPE: {
-      const tsType = scalars.find(({ gql }) => gql === type.name.value);
-      return tsType
-        ? tsType.ts
-        : `${type.name.value}${isEnum(type, enums) ? "" : suffix || ""}`;
-    }
-    case Kind.LIST_TYPE:
-    case Kind.NON_NULL_TYPE:
-      return typeToString(type.type, scalars, enums, suffix);
-  }
-};
 
 const queriesTypes = (
   schema: DocumentNode,
@@ -417,7 +555,7 @@ const queriesTypes = (
         .concat(
           (node.fields || []).map(
             (field) =>
-              `  ${field.name.value}: ${typeToString(
+              `  ${field.name.value}: ${gqlTypeToTsName(
                 field.type,
                 scalars,
                 enums
@@ -453,11 +591,11 @@ const queriesTypes = (
               (field) =>
                 `    P extends '${field.name.value}' ? T extends { ${
                   field.name.value
-                }: ${typeToString(
+                }: ${gqlTypeToTsName(
                   field.type,
                   scalars,
                   enums
-                )}Query } ? ${typeToString(
+                )}Query } ? ${gqlTypeToTsName(
                   field.type,
                   scalars,
                   enums
@@ -482,7 +620,7 @@ const queriesTypes = (
         .concat(
           (node.fields || []).map(
             (field) =>
-              `  ${field.name.value}: ${typeToString(
+              `  ${field.name.value}: ${gqlTypeToTsName(
                 field.type,
                 scalars,
                 enums
@@ -519,11 +657,12 @@ const queriesTypes = (
 const queryFunctionParameters = (
   field: FieldDefinitionNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
+  withArgs = true
 ) =>
   [
     !isScalar(field.type, scalars) ? "query: Array<T>" : null,
-    field.arguments && field.arguments.length > 0
+    withArgs && field.arguments && field.arguments.length > 0
       ? `args${
           field.arguments.every((arg) => isGqlTypeOptional(arg.type)) ? "?" : ""
         }: { ${field.arguments
@@ -531,7 +670,7 @@ const queryFunctionParameters = (
             (arg) =>
               `${arg.name.value}${
                 isGqlTypeOptional(arg.type) ? "?" : ""
-              }: ${typeToString(arg.type, scalars, enums)}`
+              }: ${gqlTypeToTsName(arg.type, scalars, enums)}`
           )
           .join(", ")} }`
       : null,
@@ -541,7 +680,7 @@ const queryFunctionParameters = (
 
 const gqlArgTypes = (args: readonly InputValueDefinitionNode[]) =>
   args
-    .map((node) => `${node.name.value}: '${gqlTypeToString(node.type)}'`)
+    .map((node) => `${node.name.value}: '${gqlTypeToGqlString(node.type)}'`)
     .join(", ");
 
 const queryOrMutationFunctions = (
@@ -555,15 +694,15 @@ const queryOrMutationFunctions = (
         `    ${field.name.value}: ${
           isScalar(field.type, scalars)
             ? ""
-            : `<T extends ${typeToString(
+            : `<T extends ${gqlTypeToTsName(
                 field.type,
                 scalars,
                 enums
               )}Query[number]>`
         }(${queryFunctionParameters(field, scalars, enums)}): Promise<${
           isScalar(field.type, scalars)
-            ? typeToString(field.type, scalars, enums)
-            : `${typeToString(field.type, scalars, enums)}Result<T>${
+            ? gqlTypeToTsName(field.type, scalars, enums)
+            : `${gqlTypeToTsName(field.type, scalars, enums)}Result<T>${
                 field.type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""
               }`
         }> => call(graphqlServerUrl, '${field.name.value}', ${
@@ -575,7 +714,7 @@ const queryOrMutationFunctions = (
         }, ${
           isEnum(field.type, enums) || isScalar(field.type, scalars)
             ? "null"
-            : `'${typeToString(field.type, scalars, enums, "Query")}'`
+            : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
         }, options),`,
       ].join("\n")
     )
@@ -586,15 +725,8 @@ const client = (
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>
 ) => {
-  const queries = schema.definitions.find(
-    (node) =>
-      node.kind === Kind.OBJECT_TYPE_DEFINITION && node.name.value === "Query"
-  ) as ObjectTypeDefinitionNode | undefined;
-  const mutations = schema.definitions.find(
-    (node) =>
-      node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-      node.name.value === "Mutation"
-  ) as ObjectTypeDefinitionNode | undefined;
+  const queries = getQueries(schema);
+  const mutations = getMutations(schema);
 
   return (
     // TODO: Handle custom headers (i.e. for authentication)
@@ -622,15 +754,153 @@ const client = (
   );
 };
 
+const react = (
+  url: string,
+  schema: DocumentNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) => {
+  const queries = getQueries(schema);
+  const mutations = getMutations(schema);
+
+  return (queries?.fields || [])
+    .map((field) =>
+      [
+        `export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
+          1
+        )}Query = <${fieldsConstraint(field.type, scalars, enums)}>(`,
+        `  ${queryFunctionParameters(field, scalars, enums)}, skip?: boolean`,
+        `): QueryResult<${queryResult(field.type, scalars, enums)}> => {`,
+        "  const [error, setError] = useState<Error | null>(null);",
+        "  // We use undefined as the empty value so we can discriminate between the loading state and the null returned by the API",
+        `  const [data, setData] = useState<${queryResult(
+          field.type,
+          scalars,
+          enums
+        )} | undefined>(undefined);`,
+        "",
+        "  useEffect(() => {",
+        "    if (!skip) {",
+        `      call('${url}', '${field.name.value}', ${
+          !isScalar(field.type, scalars) ? "query" : "null"
+        }${
+          field.arguments && field.arguments.length > 0
+            ? `, args, { ${gqlArgTypes(field.arguments)} }`
+            : ", undefined, undefined"
+        }, ${
+          isEnum(field.type, enums) || isScalar(field.type, scalars)
+            ? "null"
+            : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
+        })`,
+        "        .then((data) => {",
+        "          setData(data);",
+        "        })",
+        "        .catch((error: Error) => {",
+        "          setError(error);",
+        "        });",
+        "    }",
+        `  }, [query${
+          field.arguments && field.arguments.length > 0 ? ", args" : ""
+        }, skip]);`,
+        "",
+        "  if (error) {",
+        "    return [false, error, null];",
+        "  }",
+        "",
+        "  if (data !== undefined) {",
+        "    return [false, null, data];",
+        "  }",
+        "",
+        "  return [true, null, null];",
+        "}",
+      ].join("\n")
+    )
+    .concat(
+      (mutations?.fields || []).map((field) =>
+        [
+          `export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
+            1
+          )}Mutation = <${fieldsConstraint(field.type, scalars, enums)}>(`,
+          `  ${queryFunctionParameters(field, scalars, enums, false)}`,
+          `): MutationResult<${
+            field.arguments && field.arguments.length > 0
+              ? argsToTsDeclaration(field.arguments, scalars, enums, false)
+              : "undefined"
+          }, ${queryResult(field.type, scalars, enums)}> => {`,
+          "  const [loading, setLoading] = useState<boolean>(false);",
+          "  const [error, setError] = useState<Error | null>(null);",
+          "  // We use undefined as the empty value so we can discriminate between the loading state and the null returned by the API",
+          `  const [data, setData] = useState<${queryResult(
+            field.type,
+            scalars,
+            enums
+          )} | undefined>(undefined);`,
+          "",
+          `  const mutate = async (${
+            field.arguments && field.arguments.length > 0
+              ? argsToTsDeclaration(field.arguments, scalars, enums)
+              : ""
+          }) => {`,
+          "    if (loading) {",
+          "      return Promise.reject();",
+          "    }",
+          "",
+          "    setLoading(true);",
+          `    return call('${url}', '${field.name.value}', ${
+            !isScalar(field.type, scalars) ? "query" : "null"
+          }${
+            field.arguments && field.arguments.length > 0
+              ? `, args, { ${gqlArgTypes(field.arguments)} }`
+              : ", undefined, undefined"
+          }, ${
+            isEnum(field.type, enums) || isScalar(field.type, scalars)
+              ? "null"
+              : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
+          })`,
+          "      .then((data) => {",
+          "        setData(data);",
+          "        setLoading(false);",
+          "",
+          "        return data;",
+          "      })",
+          "      .catch((error: Error) => {",
+          "        setError(error);",
+          "        setLoading(false);",
+          "",
+          "        return Promise.reject(error);",
+          "      });",
+          "  };",
+          "",
+          "  if (error) {",
+          "    return [mutate, false, error, null];",
+          "  }",
+          "",
+          "  if (data) {",
+          "    return [mutate, false, null, data];",
+          "  }",
+          "",
+          "  return [mutate, loading, null, null];",
+          "}",
+        ].join("\n")
+      )
+    )
+    .join("\n\n");
+};
+
 // Client generator
 
 export type ScalarType = { path: string; name?: string } | { name: string };
 
 type Options = {
+  url: string;
   scalarTypes: Record<string, ScalarType>;
+  withReact: boolean;
 };
 
-const schemaToClient = (schema: DocumentNode, { scalarTypes }: Options) => {
+const schemaToClient = (
+  schema: DocumentNode,
+  { url, scalarTypes, withReact }: Options
+) => {
   const customScalars = schema.definitions.filter(
     (node) => node.kind === Kind.SCALAR_TYPE_DEFINITION
   ) as Array<ScalarTypeDefinitionNode>;
@@ -664,8 +934,9 @@ const schemaToClient = (schema: DocumentNode, { scalarTypes }: Options) => {
   ) as Array<EnumTypeDefinitionNode>;
 
   return [
+    imports(withReact),
     customScalarsImports(scalarTypes, customScalars),
-    types(schema, enums),
+    types(schema, enums, withReact),
     queryArgsToTypes(schema, scalars, enums),
     fieldsToQuery(),
     resultsToArgs(),
@@ -675,6 +946,7 @@ const schemaToClient = (schema: DocumentNode, { scalarTypes }: Options) => {
     call(),
     queriesTypes(schema, scalars, enums),
     client(schema, scalars, enums),
+    withReact ? react(url, schema, scalars, enums) : "",
   ].join("\n\n");
 };
 
