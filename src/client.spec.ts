@@ -35,6 +35,7 @@ beforeAll(async () => {
       type Query {
         user(id: ID!): User
         users: [User]!
+        userCount: Int!
       }
     `,
     {
@@ -74,6 +75,7 @@ beforeAll(async () => {
       type Query {
         user(id: ID!): User
         users: [User]!
+        userCount: Int!
       }
 
       type Mutation {

@@ -768,8 +768,16 @@ const react = (
       [
         `export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
           1
-        )}Query = <${fieldsConstraint(field.type, scalars, enums)}>(`,
-        `  ${queryFunctionParameters(field, scalars, enums)}, skip?: boolean`,
+        )}Query = ${
+          !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+            ? `<${fieldsConstraint(field.type, scalars, enums)}>`
+            : ""
+        }(`,
+        `  ${queryFunctionParameters(field, scalars, enums)}${
+          !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+            ? ", "
+            : ""
+        }skip?: boolean`,
         `): QueryResult<${queryResult(field.type, scalars, enums)}> => {`,
         "  const [error, setError] = useState<Error | null>(null);",
         "  // We use undefined as the empty value so we can discriminate between the loading state and the null returned by the API",
@@ -799,9 +807,11 @@ const react = (
         "          setError(error);",
         "        });",
         "    }",
-        `  }, [query${
-          field.arguments && field.arguments.length > 0 ? ", args" : ""
-        }, skip]);`,
+        `  }, [skip${
+          !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+            ? ", query"
+            : ""
+        }${field.arguments && field.arguments.length > 0 ? ", args" : ""}]);`,
         "",
         "  if (error) {",
         "    return [false, error, null];",
