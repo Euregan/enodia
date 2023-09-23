@@ -145,7 +145,10 @@ const getMutations = (schema: DocumentNode) =>
 // Generators
 
 const imports = (hooks: boolean) =>
-  (hooks ? ["import { useState, useEffect } from 'react'"] : []).join("\n");
+  (hooks
+    ? ["import { useState, useEffect, useCallback } from 'react'"]
+    : []
+  ).join("\n");
 
 // TODO: Group imports from same file together
 const customScalarsImports = (
@@ -223,8 +226,9 @@ const types = (
       "",
       "type KeysOfUnion<T> = T extends T ? keyof T: never;",
       "",
-      "type ClientOptions = {",
+      "type CallOptions = {",
       "  fetch?: typeof fetch;",
+      "  cache?: boolean",
       "};",
       "",
       "type MergedUnion<T> = (T extends unknown ? (k: T) => void : never) extends ((k: infer I) => void) ? I : never;",
@@ -241,22 +245,24 @@ const types = (
             "type QueryResult<Data> =",
             "  /**",
             "   * If the call is still running, then it returns a simple array",
-            "   * with `true` as the first element. The two other elements are",
-            "   * `null`.",
+            "   * with `true` as the first element. The next two elements are",
+            "   * `null`. The last element is a function to manually call the API.",
             "   */",
-            "  | readonly [true, null, null]",
+            "  | readonly [true, null, null, () => Promise<Data>]",
             "  /**",
             "   * If the call has errored, the array contains `false` as the",
             "   * loading variable, then the error that happened, and finally",
-            "   * `null` for the result.",
+            "   * `null` for the result. The last element is a function to",
+            "   *  manually call the API.",
             "   */",
-            "  | readonly [false, Error, null]",
+            "  | readonly [false, Error, null, () => Promise<Data>]",
             "  /**",
             "   * If the call has come through, the array contains `false` as the",
             "   * loading variable, `null` for the error, and finally the data",
-            "   * returned by the API.",
+            "   * returned by the API. The last element is a function to manually",
+            "   * call the API.",
             "   */",
-            "  | readonly [false, null, Data];",
+            "  | readonly [false, null, Data, () => Promise<Data>];",
           ]
         : []
     )
@@ -502,9 +508,9 @@ const call = () =>
     "  args: Record<string, Arguments> | undefined,",
     "  argTypes: ArgumentTypes | undefined,",
     "  queryType: keyof typeof queryToGqlTypes | null,",
-    "  options: ClientOptions = {}",
+    "  options: CallOptions = {}",
     ") => {",
-    "    if (hasCache(query, returns, args)) {",
+    "    if (options.cache && hasCache(query, returns, args)) {",
     "      return getCache(query, returns, args);",
     "    }",
     "",
@@ -777,7 +783,7 @@ const client = (
 
   return (
     // TODO: Handle custom headers (i.e. for authentication)
-    [`const enodia = (graphqlServerUrl: string, options?: ClientOptions) => ({`]
+    [`const enodia = (graphqlServerUrl: string, options?: CallOptions) => ({`]
       .concat(
         queries
           ? [
@@ -834,6 +840,40 @@ const react = (
           enums
         )} | undefined>(undefined);`,
         "",
+        "  const fetch = useCallback(",
+        "    () =>",
+        `      call('${url}', '${field.name.value}', ${
+          !isScalar(field.type, scalars) ? "query" : "null"
+        }${
+          field.arguments && field.arguments.length > 0
+            ? `, args, { ${gqlArgTypes(field.arguments)} }`
+            : ", undefined, undefined"
+        }, ${
+          isEnum(field.type, enums) || isScalar(field.type, scalars)
+            ? "null"
+            : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
+        }, { cache: false })`,
+        "        .then((data) => {",
+        "          setData(data);",
+        "          return data;",
+        "        })",
+        "        .catch((error: Error) => {",
+        "          setError(error);",
+        "        }),",
+        `    [${
+          !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+            ? "query"
+            : ""
+        }${
+          !isScalar(field.type, scalars) &&
+          !isEnum(field.type, enums) &&
+          field.arguments &&
+          field.arguments.length > 0
+            ? ", "
+            : ""
+        }${field.arguments && field.arguments.length > 0 ? "args" : ""}]`,
+        "  );",
+        "",
         "  useEffect(() => {",
         "    if (!skip) {",
         `      call('${url}', '${field.name.value}', ${
@@ -849,10 +889,11 @@ const react = (
         })`,
         "        .then((data) => {",
         "          setData(data);",
+        "          return data;",
         "        })",
         "        .catch((error: Error) => {",
         "          setError(error);",
-        "        });",
+        "        })",
         "    }",
         `  }, [skip${
           !isScalar(field.type, scalars) && !isEnum(field.type, enums)
@@ -861,14 +902,14 @@ const react = (
         }${field.arguments && field.arguments.length > 0 ? ", args" : ""}]);`,
         "",
         "  if (error) {",
-        "    return [false, error, null];",
+        "    return [false, error, null, fetch];",
         "  }",
         "",
         "  if (data !== undefined) {",
-        "    return [false, null, data];",
+        "    return [false, null, data, fetch];",
         "  }",
         "",
-        "  return [true, null, null];",
+        "  return [true, null, null, fetch];",
         "}",
       ].join("\n")
     )
@@ -878,7 +919,12 @@ const react = (
           `export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
             1
           )}Mutation = <${fieldsConstraint(field.type, scalars, enums)}>(`,
-          `  ${queryFunctionParameters(field, scalars, enums, false)}`,
+          `  ${queryFunctionParameters(
+            field,
+            scalars,
+            enums,
+            false
+          )}, callbacks: Array<(data: T) => Promise<any>> = []`,
           `): MutationResult<${
             field.arguments && field.arguments.length > 0
               ? argsToTsDeclaration(field.arguments, scalars, enums, false)
@@ -893,7 +939,7 @@ const react = (
             enums
           )} | undefined>(undefined);`,
           "",
-          `  const mutate = async (${
+          `  const mutate = useCallback(async (${
             field.arguments && field.arguments.length > 0
               ? argsToTsDeclaration(field.arguments, scalars, enums)
               : ""
@@ -903,6 +949,7 @@ const react = (
           "    }",
           "",
           "    setLoading(true);",
+          "",
           `    return call('${url}', '${field.name.value}', ${
             !isScalar(field.type, scalars) ? "query" : "null"
           }${
@@ -914,8 +961,9 @@ const react = (
               ? "null"
               : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
           })`,
-          "      .then((data) => {",
+          "      .then(async (data) => {",
           "        setData(data);",
+          "        await Promise.all(callbacks.map(callback => callback(data)));",
           "        setLoading(false);",
           "",
           "        return data;",
@@ -926,7 +974,11 @@ const react = (
           "",
           "        return Promise.reject(error);",
           "      });",
-          "  };",
+          `  }, [callbacks, ${
+            !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+              ? ", query"
+              : ""
+          }]);`,
           "",
           "  if (error) {",
           "    return [mutate, false, error, null];",
