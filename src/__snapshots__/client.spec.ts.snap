@@ -1,27 +1,5 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
-exports[`args 1`] = `
-"query user($id: ID!, $posts_comments_userId: ID) {
- user(id: $id)
- {
-  name
-posts {
-  content
-comments(userId: $posts_comments_userId) {
-  content
-
-}
-}
-} }"
-`;
-
-exports[`args 2`] = `
-{
-  "id": "user-875f-4277-8de0-4501f8b58070",
-  "posts_comments_userId": "user-ea97-40d2-9e1c-766288fa6037",
-}
-`;
-
 exports[`args generation for justQueries 1`] = `
 "query user($id: ID!, $posts_comments_userId: ID) {
  user(id: $id)
