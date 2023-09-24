@@ -827,7 +827,8 @@ const react = (
             : ""
         }(`,
         `  ${queryFunctionParameters(field, scalars, enums)}${
-          !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+          (!isScalar(field.type, scalars) && !isEnum(field.type, enums)) ||
+          (field.arguments && field.arguments.length > 0)
             ? ", "
             : ""
         }skip?: boolean`,
@@ -918,13 +919,18 @@ const react = (
         [
           `export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
             1
-          )}Mutation = <${fieldsConstraint(field.type, scalars, enums)}>(`,
-          `  ${queryFunctionParameters(
-            field,
-            scalars,
-            enums,
-            false
-          )}, callbacks: Array<(data: T) => Promise<any>> = []`,
+          )}Mutation = ${
+            !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+              ? `<${fieldsConstraint(field.type, scalars, enums)}>`
+              : ""
+          }(`,
+          `  ${queryFunctionParameters(field, scalars, enums, false)}${
+            !isScalar(field.type, scalars) ? ", " : ""
+          }callbacks: Array<(data: ${
+            !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+              ? "T"
+              : queryResult(field.type, scalars, enums)
+          }) => Promise<any>> = []`,
           `): MutationResult<${
             field.arguments && field.arguments.length > 0
               ? argsToTsDeclaration(field.arguments, scalars, enums, false)
@@ -974,7 +980,7 @@ const react = (
           "",
           "        return Promise.reject(error);",
           "      });",
-          `  }, [callbacks, ${
+          `  }, [callbacks${
             !isScalar(field.type, scalars) && !isEnum(field.type, enums)
               ? ", query"
               : ""
