@@ -930,7 +930,7 @@ const react = (
             !isScalar(field.type, scalars) && !isEnum(field.type, enums)
               ? "T"
               : queryResult(field.type, scalars, enums)
-          }) => Promise<any>> = []`,
+          }) => Promise<unknown>> = []`,
           `): MutationResult<${
             field.arguments && field.arguments.length > 0
               ? argsToTsDeclaration(field.arguments, scalars, enums, false)
@@ -980,7 +980,7 @@ const react = (
           "",
           "        return Promise.reject(error);",
           "      });",
-          `  }, [callbacks${
+          `  }, [callbacks, loading${
             !isScalar(field.type, scalars) && !isEnum(field.type, enums)
               ? ", query"
               : ""
