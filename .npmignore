@@ -1,0 +1,7 @@
+/node_modules
+/generated-tests-files
+/.github
+/readme/enodia.gif
+/vitest.config.ts
+/src/client.spec.ts
+/src/__snapshots__
