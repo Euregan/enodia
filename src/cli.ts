@@ -1,4 +1,4 @@
-#!/usr/bin/env -S ts-node-script --esm --transpileOnly
+#!/usr/bin/env -S npx tsx
 
 import { readFile, writeFile } from "fs/promises";
 import path from "path";
@@ -34,8 +34,7 @@ const configSchema = z.object({
 
 // TODO: Handle missing config file
 // TODO: Make sure args are JSON serializable
-const rawConfig = (await import(path.resolve("./enodia.config.ts"))).default
-  .default;
+const rawConfig = (await import(path.resolve("./enodia.config.ts"))).default;
 
 const validatedConfig = configSchema.safeParse(rawConfig);
 
