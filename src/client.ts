@@ -190,13 +190,14 @@ const customScalarsImports = (
 
 const types = (
   schema: DocumentNode,
+  scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
   react: boolean
 ) =>
   [
     "type Arguments = string | number | boolean | null | {",
     "    [K in string]: Arguments;",
-    "} | Array<Arguments>;",
+    `} | Array<Arguments> | ${scalars.map((scalar) => scalar.ts).join(" | ")};`,
     "",
     "type ArgumentTypes = Record<string, string>;",
     "",
@@ -361,7 +362,7 @@ const fieldsToQuery = () =>
     "",
     "    return `{\\n  ${scalars.join('\\n')}\\n${objects",
     "      .map((field) => {",
-    "        const key = Object.keys(field).filter((key) => key !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args'>;",
+    "        const key = Object.keys(field).filter((k) => k !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args'>;",
     "",
     "        let queryField = key",
     "",
@@ -392,7 +393,7 @@ export const resultsToArgs = () =>
     "        >",
     "      )",
     "        .map((field) => {",
-    "          const key = Object.keys(field).filter((key) => key !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args'>;",
+    "          const key = Object.keys(field).filter((k) => k !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args'>;",
     "",
     "          const queryTypes = queryToGqlTypes[query];",
     "          const types = (queryTypes as MergedUnion<typeof queryTypes>)[key];",
@@ -442,7 +443,7 @@ const returnsToVariables = () =>
     "        >",
     "      )",
     "        .map((field) => {",
-    "          const key = Object.keys(field).filter((key) => key !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args'>;",
+    "          const key = Object.keys(field).filter((k) => k !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args'>;",
     "",
     "          let args: Record<string, Arguments> = {};",
     "          if ('$args' in field && field.$args) {",
@@ -1051,7 +1052,7 @@ const schemaToClient = (
   return [
     imports(withReact),
     customScalarsImports(scalarTypes, customScalars),
-    types(schema, enums, withReact),
+    types(schema, scalars, enums, withReact),
     queryArgsToTypes(schema, scalars, enums),
     fieldsToQuery(),
     resultsToArgs(),
