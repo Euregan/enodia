@@ -4,14 +4,17 @@ import { readFile, writeFile } from "fs/promises";
 import path from "path";
 import { parse } from "graphql";
 import z from "zod";
-import schemaToClient, { ScalarType } from "./client.ts";
+import schemaToClient from "./client.ts";
 import fetcher from "./fetcher.ts";
+import schemaToServer from "./server.ts";
+import { ScalarType } from "./types.ts";
 
 // TODO: Use Commander
 
 const configSchema = z.object({
   input: z.string(),
-  output: z.string(),
+  client: z.string(),
+  server: z.string(),
   url: z.string().url(),
   scalarTypes: z.record(
     z.union([
@@ -61,7 +64,7 @@ const resolvedImports = Object.fromEntries(
             gqlType,
             {
               // We go back one level because output points to the file output
-              path: path.relative(path.resolve(config.output, ".."), imp.path),
+              path: path.relative(path.resolve(config.client, ".."), imp.path),
               name: imp.name,
             },
           ]
@@ -71,7 +74,7 @@ const resolvedImports = Object.fromEntries(
 
 console.log("- Writing client");
 await writeFile(
-  config.output,
+  config.client,
   schemaToClient(schema, {
     url: config.url,
     scalarTypes: resolvedImports,
@@ -79,3 +82,12 @@ await writeFile(
   })
 );
 console.log("✓ Wrote client");
+
+console.log("- Writing server");
+await writeFile(
+  config.server,
+  schemaToServer(schema, {
+    scalarTypes: resolvedImports,
+  })
+);
+console.log("✓ Wrote server");
