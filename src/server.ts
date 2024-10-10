@@ -6,8 +6,6 @@ import {
   ObjectTypeDefinitionNode,
   ScalarTypeDefinitionNode,
   TypeNode,
-  buildASTSchema,
-  printSchema,
 } from "graphql";
 import { GqlScalarToTs, ScalarType } from "./types.ts";
 import {
@@ -22,6 +20,14 @@ import {
 } from "./generator/helpers.ts";
 
 // Helper
+
+const baseScalars: Array<GqlScalarToTs> = [
+  { gql: "Int", ts: "number" },
+  { gql: "Float", ts: "number" },
+  { gql: "String", ts: "string" },
+  { gql: "Boolean", ts: "boolean" },
+  { gql: "ID", ts: "string" },
+];
 
 export const gqlTypeToTsString = (
   type: TypeNode,
@@ -108,17 +114,73 @@ const fieldResolversGenericSpread = (
   return types.map((node) => `${node.name.value}Key`).join(", ");
 };
 
+const fieldTypeToSchemaType = (
+  type: TypeNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+): string => {
+  switch (type.kind) {
+    case Kind.NAMED_TYPE:
+      if (isScalar(type, scalars)) {
+        switch (type.name.value) {
+          case "String":
+            return "GraphQLString";
+          case "Int":
+            return "GraphQLInt";
+          case "ID":
+            return "GraphQLID";
+          case "Float":
+            return "GraphQLFloat";
+          case "Boolean":
+            return "GraphQLBoolean";
+        }
+        return type.name.value;
+      }
+
+      if (isEnum(type, enums)) {
+        return type.name.value;
+      }
+
+      return type.name.value;
+    case Kind.LIST_TYPE:
+      return `new GraphQLList(${fieldTypeToSchemaType(
+        type.type,
+        scalars,
+        enums
+      )})`;
+    case Kind.NON_NULL_TYPE:
+      return `new GraphQLNonNull(${fieldTypeToSchemaType(
+        type.type,
+        scalars,
+        enums
+      )})`;
+  }
+};
+
 // Generators
 
 const imports = () =>
   [
     'import { IncomingMessage, ServerResponse } from "http"',
-    'import { buildSchema, graphql } from "graphql"',
+    `import { ${[
+      "buildSchema",
+      "graphql",
+      "GraphQLSchema",
+      "GraphQLObjectType",
+      "GraphQLNonNull",
+      "GraphQLList",
+      "GraphQLID",
+      "GraphQLScalarType",
+      "GraphQLEnumType",
+      "GraphQLString",
+      "GraphQLInt",
+      "GraphQLFloat",
+      "GraphQLBoolean",
+    ].join(", ")} } from "graphql"`,
   ].join("\n");
 
 const fieldsResolversType = (
   schema: DocumentNode,
-  scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>
 ) => {
   const types = schema.definitions.filter(
@@ -207,16 +269,148 @@ const queriesAndMutationsResolversType = (
     .join("\n");
 };
 
-const server = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
+const typesFromConfiguration = (
+  schema: DocumentNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) => {
+  const types = schema.definitions.filter(
+    (node) =>
+      node.kind === Kind.OBJECT_TYPE_DEFINITION &&
+      // These types are not concerned by resolver contraints
+      !["Query", "Mutation"].includes(node.name.value) &&
+      !isEnum(node, enums)
+  ) as Array<ObjectTypeDefinitionNode>;
+
+  const scalarTypes = scalars
+    .filter((scalar) => !baseScalars.some((base) => base.gql === scalar.gql))
+    .map(
+      (scalar) =>
+        `const ${
+          scalar.gql
+        } = ${`new GraphQLScalarType({ name: "${scalar.gql}" })`}`
+    );
+
+  const enumTypes = enums.map(
+    (en) =>
+      `const ${en.name.value} = new GraphQLEnumType({ name: "${
+        en.name.value
+      }", values: {${(en.values || [])
+        .map((value) => `${value.name.value}: {}`)
+        .join(", ")}} })`
+  );
+
+  return scalarTypes
+    .concat("")
+    .concat(enumTypes)
+    .concat("")
+    .concat(
+      types.flatMap((type) => [
+        `const ${type.name.value} = new GraphQLObjectType({`,
+        `    name: "${type.name.value}",`,
+        "    fields: () => ({",
+        ...(type.fields || []).flatMap((field) => [
+          `        ${field.name.value}: {`,
+          `            type: ${fieldTypeToSchemaType(
+            field.type,
+            scalars,
+            enums
+          )},`,
+          `            resolve: "${field.name.value}" in fieldsConfiguration.${type.name.value} ? (source, args, context, info) => fieldsConfiguration.${type.name.value}.${field.name.value}(source) : undefined`,
+          "        },",
+        ]),
+        "    })",
+        "})",
+      ])
+    );
+};
+
+const schemaFromConfiguration = (
+  schema: DocumentNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) => {
+  const types = schema.definitions.filter(
+    (node) =>
+      node.kind === Kind.OBJECT_TYPE_DEFINITION &&
+      // These types are not concerned by resolver contraints
+      !["Query", "Mutation"].includes(node.name.value) &&
+      !isEnum(node, enums)
+  ) as Array<ObjectTypeDefinitionNode>;
+
+  const queries = getQueries(schema);
+
+  const queryFields =
+    queries && queries.fields
+      ? queries.fields.flatMap((field) => [
+          `            ${field.name.value}: {`,
+          `                type: ${fieldTypeToSchemaType(
+            field.type,
+            scalars,
+            enums
+          )},`,
+          "                args: {",
+          ...(field.arguments || []).map(
+            (arg) =>
+              `                    ${
+                arg.name.value
+              }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`
+          ),
+          "                },",
+          `                resolve: (source, args, context, info) => Query.${
+            field.name.value
+          }(${field.arguments && field.arguments.length > 0 ? "args" : ""})`,
+          "            },",
+        ])
+      : [];
+
+  return [
+    "const schema = new GraphQLSchema({",
+    "    assumeValid: true,",
+    "    query: new GraphQLObjectType({",
+    '        name: "Query",',
+    "        fields: {",
+    ...queryFields,
+    "        },",
+    "    }),",
+    "    types: [",
+    ...[
+      `        ${scalars
+        .filter(
+          (scalar) => !baseScalars.some((base) => base.gql === scalar.gql)
+        )
+        .map((scalar) => scalar.gql)
+        .join(", ")}`,
+      `        ${enums.map((en) => en.name.value).join(", ")}`,
+      `        ${types.map((type) => type.name.value).join(", ")}`,
+    ]
+      // We remove empty lines
+      .filter((line) => line.trim())
+      .flatMap((element) => `${element},`),
+    "    ],",
+    "})",
+  ];
+};
+
+const server = (
+  schema: DocumentNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) => {
   const partialResolverConstraints = fieldResolversContraint(schema, enums);
   const resolversGenerics = fieldResolversGenericSpread(schema, enums);
 
   return [
     `export const server = <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<${resolversGenerics}>) => async ({ Query }: QueriesAndMutationsResolvers<${resolversGenerics}>) => {`,
-    `    const schema = buildSchema(\`${printSchema(
-      buildASTSchema(schema)
-    ).replaceAll("`", "\\`")}\`)`,
-    "    ",
+    ...typesFromConfiguration(schema, scalars, enums).map(
+      (line) => `    ${line}`
+    ),
+    "    Object.entries(fieldsConfiguration)",
+    "",
+    ...schemaFromConfiguration(schema, scalars, enums).map(
+      (line) => `    ${line}`
+    ),
+    "",
     "    return async (request: IncomingMessage, response: ServerResponse<IncomingMessage>) => {",
     "        let body = ''",
     "",
@@ -225,10 +419,12 @@ const server = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "        })",
     "",
     "        request.on('end', async () => {",
+    "            const { query, variables } = JSON.parse(body)",
+    "",
     "            const result = await graphql({",
     "                schema,",
-    "                source: body,",
-    "                rootValue: Query",
+    "                source: query,",
+    "                variableValues: variables,",
     "            })",
     "",
     "            response.statusCode = 200",
@@ -249,13 +445,6 @@ const schemaToServer = (schema: DocumentNode, { scalarTypes }: Options) => {
   const customScalars = schema.definitions.filter(
     (node) => node.kind === Kind.SCALAR_TYPE_DEFINITION
   ) as Array<ScalarTypeDefinitionNode>;
-  const baseScalars: Array<GqlScalarToTs> = [
-    { gql: "Int", ts: "number" },
-    { gql: "Float", ts: "number" },
-    { gql: "String", ts: "string" },
-    { gql: "Boolean", ts: "boolean" },
-    { gql: "ID", ts: "string" },
-  ];
 
   const scalars: Array<GqlScalarToTs> = baseScalars.concat(
     customScalars.map((scalar) => {
@@ -280,9 +469,9 @@ const schemaToServer = (schema: DocumentNode, { scalarTypes }: Options) => {
     customScalarsImports(scalarTypes, customScalars),
     types(schema, scalars, enums),
     queriesTypes(schema, scalars, enums),
-    fieldsResolversType(schema, scalars, enums),
+    fieldsResolversType(schema, enums),
     queriesAndMutationsResolversType(schema, scalars, enums),
-    server(schema, enums),
+    server(schema, scalars, enums),
   ].join("\n\n");
 };
 
