@@ -54,10 +54,9 @@ export const gqlTypeToTsString = (
   }
 };
 
-const toReturn = (type: string) =>
-  `Prettify<${type}> | Promise<Prettify<${type}>>`;
+const toReturn = (type: string) => `${type} | Promise<${type}>`;
 
-const partialize = (type: string) => `Omit<${type}, ${type}Key>`;
+const partialize = (type: string) => `Prettify<Omit<${type}, ${type}Key>>`;
 
 const queryFunctionParameters = (
   field: FieldDefinitionNode,
@@ -181,6 +180,7 @@ const imports = () =>
 
 const fieldsResolversType = (
   schema: DocumentNode,
+  scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>
 ) => {
   const types = schema.definitions.filter(
@@ -193,32 +193,31 @@ const fieldsResolversType = (
 
   const partialResolverConstraints = fieldResolversContraint(schema, enums);
 
-  const extenders = (type: string) =>
+  const extenders = (node: ObjectTypeDefinitionNode) =>
     ["("]
       .concat(
-        types.map(
-          (node) =>
-            `${type} extends ${node.name.value} ? ${partialize(
-              node.name.value
-            )} : NonNullable<${type}> extends ${node.name.value} ? ${partialize(
-              node.name.value
-            )} | null : ${type} extends Array<${
-              node.name.value
-            }> ? Array<${partialize(node.name.value)}> :`
+        (node.fields || []).map(
+          (field) =>
+            `Key extends "${field.name.value}" ? ${gqlTypeToTsString(
+              field.type,
+              scalars,
+              enums,
+              isScalar(field.type, scalars) || isEnum(field.type, enums)
+                ? undefined
+                : partialize
+            )} : `
         )
       )
       .concat([" never", ")"])
-      .join(" ");
+      .join("");
 
   const partialResolvers = types
     .map((node) =>
       [
         `    ${node.name.value}: {`,
         `        [Key in ${node.name.value}Key]:`,
-        `            (${node.name.value}: Prettify<${partialize(
-          node.name.value
-        )}>) =>`,
-        `            ${toReturn(extenders(`${node.name.value}[Key]`))}`,
+        `            (${node.name.value}: ${partialize(node.name.value)}) =>`,
+        `            ${toReturn(extenders(node))}`,
         "    };",
       ].join("\n")
     )
@@ -469,7 +468,7 @@ const schemaToServer = (schema: DocumentNode, { scalarTypes }: Options) => {
     customScalarsImports(scalarTypes, customScalars),
     types(schema, scalars, enums),
     queriesTypes(schema, scalars, enums),
-    fieldsResolversType(schema, enums),
+    fieldsResolversType(schema, scalars, enums),
     queriesAndMutationsResolversType(schema, scalars, enums),
     server(schema, scalars, enums),
   ].join("\n\n");
