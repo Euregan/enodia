@@ -9,7 +9,9 @@ import {
 } from "graphql";
 import { GqlScalarToTs, ScalarType } from "./types.ts";
 import {
+  baseScalars,
   customScalarsImports,
+  getCustomScalars,
   getQueries,
   gqlTypeToTsName,
   isEnum,
@@ -20,14 +22,6 @@ import {
 } from "./generator/helpers.ts";
 
 // Helper
-
-const baseScalars: Array<GqlScalarToTs> = [
-  { gql: "Int", ts: "number" },
-  { gql: "Float", ts: "number" },
-  { gql: "String", ts: "string" },
-  { gql: "Boolean", ts: "boolean" },
-  { gql: "ID", ts: "string" },
-];
 
 export const gqlTypeToTsString = (
   type: TypeNode,
@@ -441,9 +435,7 @@ type Options = {
 };
 
 const schemaToServer = (schema: DocumentNode, { scalarTypes }: Options) => {
-  const customScalars = schema.definitions.filter(
-    (node) => node.kind === Kind.SCALAR_TYPE_DEFINITION
-  ) as Array<ScalarTypeDefinitionNode>;
+  const customScalars = getCustomScalars(schema);
 
   const scalars: Array<GqlScalarToTs> = baseScalars.concat(
     customScalars.map((scalar) => {

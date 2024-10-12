@@ -13,6 +13,19 @@ import { GqlScalarToTs, ScalarType } from "../types.ts";
 
 // Helpers
 
+export const baseScalars: Array<GqlScalarToTs> = [
+  { gql: "Int", ts: "number" },
+  { gql: "Float", ts: "number" },
+  { gql: "String", ts: "string" },
+  { gql: "Boolean", ts: "boolean" },
+  { gql: "ID", ts: "string" },
+];
+
+export const getCustomScalars = (schema: DocumentNode) =>
+  schema.definitions.filter(
+    (node) => node.kind === Kind.SCALAR_TYPE_DEFINITION
+  ) as Array<ScalarTypeDefinitionNode>;
+
 export const isEnum = (
   type: TypeNode | ObjectTypeDefinitionNode,
   enums: Array<EnumTypeDefinitionNode>

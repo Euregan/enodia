@@ -11,8 +11,10 @@ import {
 import { GqlScalarToTs, ScalarType } from "./types.ts";
 import {
   argsToTsDeclaration,
+  baseScalars,
   customScalarsImports,
   fieldsConstraint,
+  getCustomScalars,
   getMutations,
   getQueries,
   gqlTypeToGqlString,
@@ -643,7 +645,7 @@ const react = (
 // Client generator
 
 type Options = {
-  url: string;
+  url?: string;
   scalarTypes: Record<string, ScalarType>;
   withReact: boolean;
 };
@@ -652,17 +654,7 @@ const schemaToClient = (
   schema: DocumentNode,
   { url, scalarTypes, withReact }: Options
 ) => {
-  const customScalars = schema.definitions.filter(
-    (node) => node.kind === Kind.SCALAR_TYPE_DEFINITION
-  ) as Array<ScalarTypeDefinitionNode>;
-
-  const baseScalars: Array<GqlScalarToTs> = [
-    { gql: "Int", ts: "number" },
-    { gql: "Float", ts: "number" },
-    { gql: "String", ts: "string" },
-    { gql: "Boolean", ts: "boolean" },
-    { gql: "ID", ts: "string" },
-  ];
+  const customScalars = getCustomScalars(schema);
 
   const scalars: Array<GqlScalarToTs> = baseScalars.concat(
     customScalars.map((scalar) => {
@@ -699,7 +691,7 @@ const schemaToClient = (
     call(),
     queriesTypes(schema, scalars, enums),
     client(schema, scalars, enums),
-    withReact ? react(url, schema, scalars, enums) : "",
+    withReact && url ? react(url, schema, scalars, enums) : "",
   ].join("\n\n");
 };
 
