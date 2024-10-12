@@ -2,9 +2,9 @@ import {
   DocumentNode,
   EnumTypeDefinitionNode,
   FieldDefinitionNode,
+  InputObjectTypeDefinitionNode,
   Kind,
   ObjectTypeDefinitionNode,
-  ScalarTypeDefinitionNode,
   TypeNode,
 } from "graphql";
 import { GqlScalarToTs, ScalarType } from "./types.ts";
@@ -160,6 +160,7 @@ const imports = () =>
       "graphql",
       "GraphQLSchema",
       "GraphQLObjectType",
+      "GraphQLInputObjectType",
       "GraphQLNonNull",
       "GraphQLList",
       "GraphQLID",
@@ -275,6 +276,10 @@ const typesFromConfiguration = (
       !isEnum(node, enums)
   ) as Array<ObjectTypeDefinitionNode>;
 
+  const inputs = schema.definitions.filter(
+    (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION
+  ) as Array<InputObjectTypeDefinitionNode>;
+
   const scalarTypes = scalars
     .filter((scalar) => !baseScalars.some((base) => base.gql === scalar.gql))
     .map(
@@ -310,6 +315,25 @@ const typesFromConfiguration = (
             enums
           )},`,
           `            resolve: "${field.name.value}" in fieldsConfiguration.${type.name.value} ? (source, args, context, info) => fieldsConfiguration.${type.name.value}.${field.name.value}(source) : undefined`,
+          "        },",
+        ]),
+        "    })",
+        "})",
+      ])
+    )
+    .concat("")
+    .concat(
+      inputs.flatMap((input) => [
+        `const ${input.name.value} = new GraphQLInputObjectType({`,
+        `    name: "${input.name.value}",`,
+        "    fields: () => ({",
+        ...(input.fields || []).flatMap((field) => [
+          `        ${field.name.value}: {`,
+          `            type: ${fieldTypeToSchemaType(
+            field.type,
+            scalars,
+            enums
+          )},`,
           "        },",
         ]),
         "    })",

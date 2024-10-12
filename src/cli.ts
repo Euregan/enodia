@@ -16,17 +16,19 @@ const configSchema = z.object({
   client: z.string(),
   server: z.string(),
   url: z.string().url().optional(),
-  scalarTypes: z.record(
-    z.union([
-      z.object({
-        path: z.string(),
-        name: z.string().optional(),
-      }),
-      z.object({
-        name: z.string(),
-      }),
-    ])
-  ),
+  scalarTypes: z
+    .record(
+      z.union([
+        z.object({
+          path: z.string(),
+          name: z.string().optional(),
+        }),
+        z.object({
+          name: z.string(),
+        }),
+      ])
+    )
+    .optional(),
   headers: z
     .function()
     .args()
