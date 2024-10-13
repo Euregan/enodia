@@ -60,16 +60,18 @@ const queryFunctionParameters = (
 ) =>
   [
     withArgs && field.arguments && field.arguments.length > 0
-      ? `args${
-          field.arguments.every((arg) => isGqlTypeOptional(arg.type)) ? "?" : ""
-        }: { ${field.arguments
+      ? `args: { ${field.arguments
           .map(
             (arg) =>
               `${arg.name.value}${
                 isGqlTypeOptional(arg.type) ? "?" : ""
               }: ${gqlTypeToTsName(arg.type, scalars, enums)}`
           )
-          .join(", ")} }`
+          .join(", ")} }${
+          field.arguments.every((arg) => isGqlTypeOptional(arg.type))
+            ? " | undefined"
+            : ""
+        }`
       : null,
   ]
     .filter(Boolean)
@@ -211,14 +213,18 @@ const fieldsResolversType = (
       [
         `    ${node.name.value}: {`,
         `        [Key in ${node.name.value}Key]:`,
-        `            (${node.name.value}: ${partialize(node.name.value)}) =>`,
+        `            (${node.name.value}: ${partialize(
+          node.name.value
+        )}, context: Context) =>`,
         `            ${toReturn(extenders(node))}`,
         "    };",
       ].join("\n")
     )
     .join("\n");
 
-  return [`export type FieldsResolvers<${partialResolverConstraints}> = {`]
+  return [
+    `export type FieldsResolvers<Context, ${partialResolverConstraints}> = {`,
+  ]
     .concat(partialResolvers)
     .concat(["}"])
     .join("\n");
@@ -242,7 +248,7 @@ const queriesAndMutationsResolversType = (
                   field,
                   scalars,
                   enums
-                )}) => ${toReturn(
+                )}, context: Context) => ${toReturn(
                   gqlTypeToTsString(
                     field.type,
                     scalars,
@@ -256,7 +262,7 @@ const queriesAndMutationsResolversType = (
       : [];
 
   return [
-    `export type QueriesAndMutationsResolvers<${partialResolverConstraints}> = {`,
+    `export type QueriesAndMutationsResolvers<Context, ${partialResolverConstraints}> = {`,
   ]
     .concat(query)
     .concat(["}"])
@@ -314,7 +320,8 @@ const typesFromConfiguration = (
             scalars,
             enums
           )},`,
-          `            resolve: "${field.name.value}" in fieldsConfiguration.${type.name.value} ? (source, args, context, info) => fieldsConfiguration.${type.name.value}.${field.name.value}(source) : undefined`,
+          // TODO: Add the proper source type to the cast
+          `            resolve: "${field.name.value}" in fieldsConfiguration.${type.name.value} ? (source, args, context, info) => (fieldsConfiguration.${type.name.value} as { ${field.name.value}: (source: any, context: Context) => unknown }).${field.name.value}(source, context) : undefined`,
           "        },",
         ]),
         "    })",
@@ -376,7 +383,9 @@ const schemaFromConfiguration = (
           "                },",
           `                resolve: (source, args, context, info) => Query.${
             field.name.value
-          }(${field.arguments && field.arguments.length > 0 ? "args" : ""})`,
+          }(${
+            field.arguments && field.arguments.length > 0 ? "args, " : ""
+          }context)`,
           "            },",
         ])
       : [];
@@ -418,7 +427,14 @@ const server = (
   const resolversGenerics = fieldResolversGenericSpread(schema, enums);
 
   return [
-    `export const server = <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<${resolversGenerics}>) => async ({ Query }: QueriesAndMutationsResolvers<${resolversGenerics}>) => {`,
+    "type EnodiaOptions<Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void> = {",
+    "    instantiateContext?: (request: Request, response: Response) => Context | Promise<Context>",
+    "}",
+    "",
+    "export const server =",
+    "    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateContext }: EnodiaOptions = {}) =>",
+    `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
+    `    async ({ Query }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
     ...typesFromConfiguration(schema, scalars, enums).map(
       (line) => `    ${line}`
     ),
@@ -428,7 +444,7 @@ const server = (
       (line) => `    ${line}`
     ),
     "",
-    "    return async (request: IncomingMessage, response: ServerResponse<IncomingMessage>) => {",
+    "    return async (request: Request, response: Response) => {",
     "        let body = ''",
     "",
     "        request.on('data', (chunk) => {",
@@ -442,6 +458,7 @@ const server = (
     "                schema,",
     "                source: query,",
     "                variableValues: variables,",
+    "                contextValue: await instantiateContext?.(request, response),",
     "            })",
     "",
     "            response.statusCode = 200",
