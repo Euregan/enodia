@@ -50,7 +50,7 @@ export const gqlTypeToTsString = (
 
 const toReturn = (type: string) => `${type} | Promise<${type}>`;
 
-const partialize = (type: string) => `Prettify<Omit<${type}, ${type}Key>>`;
+const partialize = (type: string) => `Prettify<Omit<${type}, ${type}Keys>>`;
 
 const queryFunctionParameters = (
   field: FieldDefinitionNode,
@@ -90,7 +90,7 @@ const fieldResolversContraint = (
   ) as Array<ObjectTypeDefinitionNode>;
 
   return types
-    .map((node) => `${node.name.value}Key extends keyof ${node.name.value}`)
+    .map((node) => `${node.name.value}Keys extends keyof ${node.name.value}`)
     .join(", ");
 };
 
@@ -106,7 +106,7 @@ const fieldResolversGenericSpread = (
       !isEnum(node, enums)
   ) as Array<ObjectTypeDefinitionNode>;
 
-  return types.map((node) => `${node.name.value}Key`).join(", ");
+  return types.map((node) => `${node.name.value}Keys`).join(", ");
 };
 
 const fieldTypeToSchemaType = (
@@ -212,7 +212,7 @@ const fieldsResolversType = (
     .map((node) =>
       [
         `    ${node.name.value}: {`,
-        `        [Key in ${node.name.value}Key]:`,
+        `        [Key in ${node.name.value}Keys]:`,
         `            (${node.name.value}: ${partialize(
           node.name.value
         )}, context: Context) =>`,
@@ -248,7 +248,9 @@ const queriesAndMutationsResolversType = (
                   field,
                   scalars,
                   enums
-                )}, context: Context) => ${toReturn(
+                )}${
+                  field.arguments && field.arguments.length > 0 ? ", " : ""
+                }context: Context) => ${toReturn(
                   gqlTypeToTsString(
                     field.type,
                     scalars,
@@ -310,7 +312,7 @@ const typesFromConfiguration = (
     .concat("")
     .concat(
       types.flatMap((type) => [
-        `const ${type.name.value} = new GraphQLObjectType({`,
+        `const ${type.name.value}: GraphQLObjectType = new GraphQLObjectType({`,
         `    name: "${type.name.value}",`,
         "    fields: () => ({",
         ...(type.fields || []).flatMap((field) => [
@@ -331,7 +333,7 @@ const typesFromConfiguration = (
     .concat("")
     .concat(
       inputs.flatMap((input) => [
-        `const ${input.name.value} = new GraphQLInputObjectType({`,
+        `const ${input.name.value}: GraphQLInputObjectType = new GraphQLInputObjectType({`,
         `    name: "${input.name.value}",`,
         "    fields: () => ({",
         ...(input.fields || []).flatMap((field) => [
@@ -432,7 +434,7 @@ const server = (
     "}",
     "",
     "export const server =",
-    "    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateContext }: EnodiaOptions = {}) =>",
+    "    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateContext }: EnodiaOptions<Request, Response, Context> = {}) =>",
     `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
     `    async ({ Query }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
     ...typesFromConfiguration(schema, scalars, enums).map(
@@ -452,7 +454,7 @@ const server = (
     "        })",
     "",
     "        request.on('end', async () => {",
-    "            const { query, variables } = JSON.parse(body)",
+    "            const { query, variables } = global.JSON.parse(body)",
     "",
     "            const result = await graphql({",
     "                schema,",
@@ -462,7 +464,7 @@ const server = (
     "            })",
     "",
     "            response.statusCode = 200",
-    "            response.end(JSON.stringify(result))",
+    "            response.end(global.JSON.stringify(result))",
     "        })",
     "    }",
     "}",
