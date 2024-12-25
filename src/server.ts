@@ -12,6 +12,7 @@ import {
   baseScalars,
   customScalarsImports,
   getCustomScalars,
+  getMutations,
   getQueries,
   gqlTypeToTsName,
   isEnum,
@@ -263,10 +264,37 @@ const queriesAndMutationsResolversType = (
           .concat(["    }"])
       : [];
 
+  const mutations = getMutations(schema);
+  const mutation =
+    mutations && mutations.fields
+      ? ["    Mutation: {"]
+          .concat(
+            mutations.fields.map(
+              (field) =>
+                `        ${field.name.value}: (${queryFunctionParameters(
+                  field,
+                  scalars,
+                  enums
+                )}${
+                  field.arguments && field.arguments.length > 0 ? ", " : ""
+                }context: Context) => ${toReturn(
+                  gqlTypeToTsString(
+                    field.type,
+                    scalars,
+                    enums,
+                    isScalar(field.type, scalars) ? undefined : partialize
+                  )
+                )}`
+            )
+          )
+          .concat(["    }"])
+      : [];
+
   return [
     `export type QueriesAndMutationsResolvers<Context, ${partialResolverConstraints}> = {`,
   ]
     .concat(query)
+    .concat(mutation)
     .concat(["}"])
     .join("\n");
 };
@@ -392,15 +420,63 @@ const schemaFromConfiguration = (
         ])
       : [];
 
+  const query =
+    queryFields.length > 0
+      ? [
+          "    query: new GraphQLObjectType({",
+          '        name: "Query",',
+          "        fields: {",
+          ...queryFields,
+          "        },",
+          "    }),",
+        ]
+      : [];
+
+  const mutations = getMutations(schema);
+
+  const mutationFields =
+    mutations && mutations.fields
+      ? mutations.fields.flatMap((field) => [
+          `            ${field.name.value}: {`,
+          `                type: ${fieldTypeToSchemaType(
+            field.type,
+            scalars,
+            enums
+          )},`,
+          "                args: {",
+          ...(field.arguments || []).map(
+            (arg) =>
+              `                    ${
+                arg.name.value
+              }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`
+          ),
+          "                },",
+          `                resolve: (source, args, context, info) => Mutation.${
+            field.name.value
+          }(${
+            field.arguments && field.arguments.length > 0 ? "args, " : ""
+          }context)`,
+          "            },",
+        ])
+      : [];
+
+  const mutation =
+    mutationFields.length > 0
+      ? [
+          "    mutation: new GraphQLObjectType({",
+          '        name: "Mutation",',
+          "        fields: {",
+          ...mutationFields,
+          "        },",
+          "    }),",
+        ]
+      : [];
+
   return [
     "const schema = new GraphQLSchema({",
     "    assumeValid: true,",
-    "    query: new GraphQLObjectType({",
-    '        name: "Query",',
-    "        fields: {",
-    ...queryFields,
-    "        },",
-    "    }),",
+    ...query,
+    ...mutation,
     "    types: [",
     ...[
       `        ${scalars
@@ -436,7 +512,7 @@ const server = (
     "export const server =",
     "    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateContext }: EnodiaOptions<Request, Response, Context> = {}) =>",
     `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
-    `    async ({ Query }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
+    `    async ({ Query, Mutation }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
     ...typesFromConfiguration(schema, scalars, enums).map(
       (line) => `    ${line}`
     ),
