@@ -176,6 +176,21 @@ const imports = () =>
     ].join(", ")} } from "graphql"`,
   ].join("\n");
 
+const serverTypes = () =>
+  [
+    "export class DetailedResponse<T> {",
+    "  public content: T",
+    "  public headers: Record<string, string>",
+    "  public cookies: Record<string, string>",
+    "",
+    "  constructor({ content, headers = {}, cookies = {} }: { content: T, headers?: Record<string, string>, cookies?: Record<string, string> }) {",
+    "    this.content = content",
+    "    this.headers = headers",
+    "    this.cookies = cookies",
+    "  }",
+    "}",
+  ].join("\n");
+
 const fieldsResolversType = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
@@ -269,23 +284,21 @@ const queriesAndMutationsResolversType = (
     mutations && mutations.fields
       ? ["    Mutation: {"]
           .concat(
-            mutations.fields.map(
-              (field) =>
-                `        ${field.name.value}: (${queryFunctionParameters(
-                  field,
-                  scalars,
-                  enums
-                )}${
-                  field.arguments && field.arguments.length > 0 ? ", " : ""
-                }context: Context) => ${toReturn(
-                  gqlTypeToTsString(
-                    field.type,
-                    scalars,
-                    enums,
-                    isScalar(field.type, scalars) ? undefined : partialize
-                  )
-                )}`
-            )
+            mutations.fields.map((field) => {
+              const returnType = gqlTypeToTsString(
+                field.type,
+                scalars,
+                enums,
+                isScalar(field.type, scalars) ? undefined : partialize
+              );
+              return `        ${field.name.value}: (${queryFunctionParameters(
+                field,
+                scalars,
+                enums
+              )}${
+                field.arguments && field.arguments.length > 0 ? ", " : ""
+              }context: Context) => DetailedResponse<${returnType}> | ${returnType} | Promise<DetailedResponse<${returnType}> | ${returnType}>`;
+            })
           )
           .concat(["    }"])
       : [];
@@ -351,7 +364,7 @@ const typesFromConfiguration = (
             enums
           )},`,
           // TODO: Add the proper source type to the cast
-          `            resolve: "${field.name.value}" in fieldsConfiguration.${type.name.value} ? (source, args, context, info) => (fieldsConfiguration.${type.name.value} as { ${field.name.value}: (source: any, context: Context) => unknown }).${field.name.value}(source, context) : undefined`,
+          `            resolve: "${field.name.value}" in fieldsConfiguration.${type.name.value} ? (source, args, context, info) => (fieldsConfiguration.${type.name.value} as { ${field.name.value}: (source: any, context: { userContext: Context }) => unknown }).${field.name.value}(source, context.userContext) : undefined`,
           "        },",
         ]),
         "    })",
@@ -415,7 +428,7 @@ const schemaFromConfiguration = (
             field.name.value
           }(${
             field.arguments && field.arguments.length > 0 ? "args, " : ""
-          }context)`,
+          }context.userContext)`,
           "            },",
         ])
       : [];
@@ -451,11 +464,20 @@ const schemaFromConfiguration = (
               }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`
           ),
           "                },",
-          `                resolve: (source, args, context, info) => Mutation.${
+          "                resolve: async (source, args, context, info) => {",
+          `                    const result = await Mutation.${
             field.name.value
           }(${
             field.arguments && field.arguments.length > 0 ? "args, " : ""
-          }context)`,
+          }context.userContext)`,
+          "",
+          "                    if (result instanceof DetailedResponse) {",
+          "                        context.response.setHeaders(new Map(Object.entries(result.headers)))",
+          "                        context.response.setHeader('Set-Cookie', Object.entries(result.cookies).map(([key, value]) => `${key}=${value}`))",
+          "                    }",
+          "",
+          "                    return result instanceof DetailedResponse ? result.content : result",
+          "                }",
           "            },",
         ])
       : [];
@@ -536,7 +558,11 @@ const server = (
     "                schema,",
     "                source: query,",
     "                variableValues: variables,",
-    "                contextValue: await instantiateContext?.(request, response),",
+    "                contextValue: {",
+    "                    request,",
+    "                    response,",
+    "                    userContext: await instantiateContext?.(request, response)",
+    "                },",
     "            })",
     "",
     "            response.statusCode = 200",
@@ -578,6 +604,7 @@ const schemaToServer = (schema: DocumentNode, { scalarTypes }: Options) => {
     imports(),
     customScalarsImports(scalarTypes, customScalars),
     types(schema, scalars, enums),
+    serverTypes(),
     queriesTypes(schema, scalars, enums),
     fieldsResolversType(schema, scalars, enums),
     queriesAndMutationsResolversType(schema, scalars, enums),

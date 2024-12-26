@@ -319,6 +319,7 @@ const call = () =>
     "  args: Record<string, Arguments> | undefined,",
     "  argTypes: ArgumentTypes | undefined,",
     "  queryType: keyof typeof queryToGqlTypes | null,",
+    "  queryOrMutation: 'query' | 'mutation',",
     "  options: CallOptions = {}",
     ") => {",
     "    if (options.cache && hasCache(query, returns, args)) {",
@@ -329,7 +330,7 @@ const call = () =>
     "      method: 'POST',",
     "      body: JSON.stringify({",
     "        operationName: query,",
-    "        query: `query ${query}${",
+    "        query: `${queryOrMutation} ${query}${",
     "          argTypes && args ? `(${argsToGql(argTypes, args, queryType, returns)})` : ''",
     "        } {\\n ${query}${",
     "          args ? `(${variablesToArgs(args)})` : ''",
@@ -408,7 +409,7 @@ const queryOrMutationFunctions = (
           isEnum(field.type, enums) || isScalar(field.type, scalars)
             ? "null"
             : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
-        }, options),`,
+        }, "query", options),`,
       ].join("\n")
     )
     .join("\n");
@@ -493,7 +494,7 @@ const react = (
           isEnum(field.type, enums) || isScalar(field.type, scalars)
             ? "null"
             : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
-        }, { cache: false })`,
+        }, "query", { cache: false })`,
         "        .then((data) => {",
         "          setData(data);",
         "          return data;",
@@ -527,7 +528,7 @@ const react = (
           isEnum(field.type, enums) || isScalar(field.type, scalars)
             ? "null"
             : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
-        })`,
+        }, "query")`,
         "        .then((data) => {",
         "          setData(data);",
         "          return data;",
@@ -606,7 +607,7 @@ const react = (
             isEnum(field.type, enums) || isScalar(field.type, scalars)
               ? "null"
               : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
-          })`,
+          }, "mutation")`,
           "      .then(async (data) => {",
           "        setData(data);",
           "        await Promise.all(callbacks.map(callback => callback(data)));",
