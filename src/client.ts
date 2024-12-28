@@ -496,9 +496,9 @@ const react = (
             ? "null"
             : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
         }, "query", { cache: false })`,
-        "        .then((data) => {",
-        "          setData(data);",
-        "          return data;",
+        "        .then(({ data }) => {",
+        `          setData(data.${field.name.value});`,
+        `          return data.${field.name.value};`,
         "        })",
         "        .catch((error: Error) => {",
         "          setError(error);",
@@ -530,9 +530,9 @@ const react = (
             ? "null"
             : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
         }, "query")`,
-        "        .then((data) => {",
-        "          setData(data);",
-        "          return data;",
+        "        .then(({ data }) => {",
+        `          setData(data.${field.name.value});`,
+        `          return data.${field.name.value};`,
         "        })",
         "        .catch((error: Error) => {",
         "          setError(error);",
@@ -609,12 +609,12 @@ const react = (
               ? "null"
               : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
           }, "mutation")`,
-          "      .then(async (data) => {",
-          "        setData(data);",
+          "      .then(async ({ data }) => {",
+          `        setData(data.${field.name.value});`,
           "        await Promise.all(callbacks.map(callback => callback(data)));",
           "        setLoading(false);",
           "",
-          "        return data;",
+          `        return data.${field.name.value};`,
           "      })",
           "      .catch((error: Error) => {",
           "        setError(error);",
