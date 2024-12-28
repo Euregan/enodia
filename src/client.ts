@@ -540,7 +540,7 @@ const react = (
         "    }",
         `  }, [skip${
           !isScalar(field.type, scalars) && !isEnum(field.type, enums)
-            ? ", query"
+            ? ", JSON.stringify(query)"
             : ""
         }${field.arguments && field.arguments.length > 0 ? ", args" : ""}]);`,
         "",
