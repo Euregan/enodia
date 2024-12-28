@@ -340,6 +340,7 @@ const call = () =>
     "      headers: {",
     "        'Content-Type': 'application/json',",
     "      },",
+    "      credentials: 'include',",
     "    }).then((response: Response) => response.json());",
     "",
     "    setCache(query, returns, args, result);",
