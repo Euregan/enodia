@@ -345,15 +345,21 @@ export const queriesTypes = (
               (field) =>
                 `    P extends '${field.name.value}' ? T extends { ${
                   field.name.value
-                }: ${gqlTypeToTsName(
-                  field.type,
-                  scalars,
-                  enums
-                )}Query } ? ${gqlTypeToTsName(
-                  field.type,
-                  scalars,
-                  enums
-                )}Result<T['${field.name.value}'][number]> : never :`
+                }: ${gqlTypeToTsName(field.type, scalars, enums)}Query } ? ${
+                  field.type.kind === Kind.LIST_TYPE ||
+                  (field.type.kind === Kind.NON_NULL_TYPE &&
+                    field.type.type.kind === Kind.LIST_TYPE)
+                    ? "Array<"
+                    : ""
+                }${gqlTypeToTsName(field.type, scalars, enums)}Result<T['${
+                  field.name.value
+                }'][number]>${
+                  field.type.kind === Kind.LIST_TYPE ||
+                  (field.type.kind === Kind.NON_NULL_TYPE &&
+                    field.type.type.kind === Kind.LIST_TYPE)
+                    ? ">"
+                    : ""
+                } : never :`
             )
         )
         .concat([
