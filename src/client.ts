@@ -645,14 +645,13 @@ const react = (
 // Client generator
 
 type Options = {
-  url?: string;
   scalarTypes: Record<string, ScalarType>;
-  withReact: boolean;
+  withReact?: { url: string };
 };
 
 const schemaToClient = (
   schema: DocumentNode,
-  { url, scalarTypes, withReact }: Options
+  { scalarTypes, withReact }: Options
 ) => {
   const customScalars = getCustomScalars(schema);
 
@@ -677,10 +676,10 @@ const schemaToClient = (
   ) as Array<EnumTypeDefinitionNode>;
 
   return [
-    imports(withReact),
+    imports(!!withReact),
     customScalarsImports(scalarTypes, customScalars),
     types(schema, scalars, enums),
-    clientTypes(schema, withReact),
+    clientTypes(schema, !!withReact),
     queryArgsToTypes(schema, scalars, enums),
     fieldsToQuery(),
     resultsToArgs(),
@@ -691,7 +690,7 @@ const schemaToClient = (
     call(),
     queriesTypes(schema, scalars, enums),
     client(schema, scalars, enums),
-    withReact && url ? react(url, schema, scalars, enums) : "",
+    withReact ? react(withReact.url, schema, scalars, enums) : "",
   ].join("\n\n");
 };
 

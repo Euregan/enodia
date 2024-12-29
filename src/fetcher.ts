@@ -8,7 +8,7 @@ import {
 
 const fetcher = async (
   url: string,
-  headers: Record<string, string>
+  headers: Record<string, string> = {}
 ): Promise<DocumentNode> => {
   // @ts-expect-error The types for node don't include fetch https://github.com/DefinitelyTyped/DefinitelyTyped/issues/60924
   const response = await fetch(url, {

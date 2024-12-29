@@ -7,16 +7,27 @@ import z from "zod";
 import schemaToClient from "./client.ts";
 import fetcher from "./fetcher.ts";
 import schemaToServer from "./server.ts";
-import { ScalarType } from "./types.ts";
 import prompts from "prompts";
 import { getCustomScalars } from "./generator/helpers.ts";
 
 const configSchema = z.object({
-  input: z.string(),
-  client: z.string(),
-  server: z.string(),
-  url: z.string().url().optional(),
-  scalarTypes: z
+  schema: z.string(),
+  client: z
+    .object({
+      path: z.string(),
+      react: z
+        .object({
+          url: z.string(),
+        })
+        .optional(),
+    })
+    .optional(),
+  server: z
+    .object({
+      path: z.string(),
+    })
+    .optional(),
+  scalars: z
     .record(
       z.union([
         z.object({
@@ -29,12 +40,6 @@ const configSchema = z.object({
       ])
     )
     .optional(),
-  headers: z
-    .function()
-    .args()
-    .returns(z.promise(z.record(z.string())))
-    .optional(),
-  react: z.boolean().optional(),
 });
 
 const configPath = path.resolve("./enodia.config.ts");
@@ -177,44 +182,30 @@ if (!validatedConfig.success) {
 const config = validatedConfig.data;
 
 console.log("- Fetching schema");
-const schema = config.input.startsWith("http")
-  ? await fetcher(config.input, config.headers ? await config.headers() : {})
-  : parse(await readFile(config.input, "utf-8"));
+const schema = config.schema.startsWith("http")
+  ? await fetcher(config.schema)
+  : parse(await readFile(config.schema, "utf-8"));
 console.log("✓ Fetched schema");
 
-// TODO: Verify that the file actually exist, and that they do export the specified type
-const resolvedImports = Object.fromEntries(
-  Object.entries((config.scalarTypes || {}) as Record<string, ScalarType>).map(
-    ([gqlType, imp]) =>
-      "path" in imp
-        ? [
-            gqlType,
-            {
-              // We go back one level because output points to the file output
-              path: path.relative(path.resolve(config.client, ".."), imp.path),
-              name: imp.name,
-            },
-          ]
-        : [gqlType, imp]
-  )
-);
+if (config.client) {
+  console.log("- Writing client");
+  await writeFile(
+    config.client.path,
+    schemaToClient(schema, {
+      scalarTypes: config.scalars || {},
+      withReact: config.client.react,
+    })
+  );
+  console.log("✓ Wrote client");
+}
 
-console.log("- Writing client");
-await writeFile(
-  config.client,
-  schemaToClient(schema, {
-    url: config.url,
-    scalarTypes: resolvedImports,
-    withReact: (config.react && !!config.url) || false,
-  })
-);
-console.log("✓ Wrote client");
-
-console.log("- Writing server");
-await writeFile(
-  config.server,
-  schemaToServer(schema, {
-    scalarTypes: resolvedImports,
-  })
-);
-console.log("✓ Wrote server");
+if (config.server) {
+  console.log("- Writing server");
+  await writeFile(
+    config.server.path,
+    schemaToServer(schema, {
+      scalarTypes: config.scalars || {},
+    })
+  );
+  console.log("✓ Wrote server");
+}
