@@ -4,8 +4,6 @@ import {
   ObjectTypeDefinitionNode,
   FieldDefinitionNode,
   InputValueDefinitionNode,
-  InputObjectTypeDefinitionNode,
-  ScalarTypeDefinitionNode,
   EnumTypeDefinitionNode,
 } from "graphql";
 import { GqlScalarToTs, ScalarType } from "./types.ts";
