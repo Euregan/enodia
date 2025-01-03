@@ -159,7 +159,6 @@ const imports = () =>
   [
     'import { IncomingMessage, ServerResponse } from "http"',
     `import { ${[
-      "buildSchema",
       "graphql",
       "GraphQLSchema",
       "GraphQLObjectType",
@@ -531,10 +530,10 @@ const server = (
     "    instantiateContext?: (request: Request, response: Response) => Context | Promise<Context>",
     "}",
     "",
-    "export const server =",
-    "    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateContext }: EnodiaOptions<Request, Response, Context> = {}) =>",
+    "export const buildSchema =",
+    "    <Context = void>() =>",
     `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
-    `    async ({ Query, Mutation }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
+    `    ({ Query, Mutation }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
     ...typesFromConfiguration(schema, scalars, enums).map(
       (line) => `    ${line}`
     ),
@@ -543,6 +542,15 @@ const server = (
     ...schemaFromConfiguration(schema, scalars, enums).map(
       (line) => `    ${line}`
     ),
+    "",
+    "    return schema",
+    "}",
+    "",
+    "export const server =",
+    "    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateContext }: EnodiaOptions<Request, Response, Context> = {}) =>",
+    `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
+    `    ({ Query, Mutation }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
+    "    const schema = buildSchema<Context>()(fieldsConfiguration)({ Query, Mutation })",
     "",
     "    return async (request: Request, response: Response) => {",
     "        let body = ''",
