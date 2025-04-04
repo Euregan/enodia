@@ -93,15 +93,24 @@ export const gqlTypeToTsString = (
   type: TypeNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
-  suffix?: string
+  suffix?: string,
+  optional = true
 ): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE:
-      return gqlTypeToTsName(type, scalars, enums, suffix);
+      return `${gqlTypeToTsName(type, scalars, enums, suffix)}${
+        optional ? " | undefined" : ""
+      }`;
     case Kind.LIST_TYPE:
-      return `Array<${gqlTypeToTsString(type.type, scalars, enums, suffix)}>`;
+      return `Array<${gqlTypeToTsString(
+        type.type.kind === Kind.NON_NULL_TYPE ? type.type.type : type.type,
+        scalars,
+        enums,
+        suffix,
+        false
+      )}>${optional ? " | undefined" : ""}`;
     case Kind.NON_NULL_TYPE:
-      return gqlTypeToTsString(type.type, scalars, enums, suffix);
+      return gqlTypeToTsString(type.type, scalars, enums, suffix, false);
   }
 };
 
@@ -380,11 +389,9 @@ export const queriesTypes = (
         .concat(
           (node.fields || []).map(
             (field) =>
-              `  ${field.name.value}: ${gqlTypeToTsName(
-                field.type,
-                scalars,
-                enums
-              )}`
+              `  ${field.name.value}${
+                isGqlTypeOptional(field.type) ? "?" : ""
+              }: ${gqlTypeToTsString(field.type, scalars, enums, "", false)}`
           )
         )
         .concat(["};"])

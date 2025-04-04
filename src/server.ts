@@ -14,7 +14,7 @@ import {
   getCustomScalars,
   getMutations,
   getQueries,
-  gqlTypeToTsName,
+  gqlTypeToTsString,
   isEnum,
   isGqlTypeOptional,
   isScalar,
@@ -23,31 +23,6 @@ import {
 } from "./generator/helpers.ts";
 
 // Helper
-
-export const gqlTypeToTsString = (
-  type: TypeNode,
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>,
-  wrapper: (type: string) => string = (type) => type,
-  nullable = true
-): string => {
-  switch (type.kind) {
-    case Kind.NAMED_TYPE:
-      return `${wrapper(gqlTypeToTsName(type, scalars, enums))}${
-        nullable ? " | null" : ""
-      }`;
-    case Kind.LIST_TYPE:
-      return `Array<${gqlTypeToTsString(
-        type.type,
-        scalars,
-        enums,
-        wrapper,
-        nullable
-      )}>`;
-    case Kind.NON_NULL_TYPE:
-      return gqlTypeToTsString(type.type, scalars, enums, wrapper, false);
-  }
-};
 
 const toReturn = (type: string) => `${type} | Promise<${type}>`;
 
@@ -66,7 +41,7 @@ const queryFunctionParameters = (
             (arg) =>
               `${arg.name.value}${
                 isGqlTypeOptional(arg.type) ? "?" : ""
-              }: ${gqlTypeToTsName(arg.type, scalars, enums)}`
+              }: ${gqlTypeToTsString(arg.type, scalars, enums, "", false)}`
           )
           .join(", ")} }${
           field.arguments.every((arg) => isGqlTypeOptional(arg.type))
@@ -213,10 +188,7 @@ const fieldsResolversType = (
             `Key extends "${field.name.value}" ? ${gqlTypeToTsString(
               field.type,
               scalars,
-              enums,
-              isScalar(field.type, scalars) || isEnum(field.type, enums)
-                ? undefined
-                : partialize
+              enums
             )} : `
         )
       )
@@ -266,12 +238,7 @@ const queriesAndMutationsResolversType = (
                 )}${
                   field.arguments && field.arguments.length > 0 ? ", " : ""
                 }context: Context) => ${toReturn(
-                  gqlTypeToTsString(
-                    field.type,
-                    scalars,
-                    enums,
-                    isScalar(field.type, scalars) ? undefined : partialize
-                  )
+                  gqlTypeToTsString(field.type, scalars, enums)
                 )}`
             )
           )
@@ -284,12 +251,7 @@ const queriesAndMutationsResolversType = (
       ? ["    Mutation: {"]
           .concat(
             mutations.fields.map((field) => {
-              const returnType = gqlTypeToTsString(
-                field.type,
-                scalars,
-                enums,
-                isScalar(field.type, scalars) ? undefined : partialize
-              );
+              const returnType = gqlTypeToTsString(field.type, scalars, enums);
               return `        ${field.name.value}: (${queryFunctionParameters(
                 field,
                 scalars,
@@ -525,6 +487,8 @@ const server = (
   const partialResolverConstraints = fieldResolversContraint(schema, enums);
   const resolversGenerics = fieldResolversGenericSpread(schema, enums);
 
+  const mutations = getMutations(schema);
+
   return [
     "type EnodiaOptions<Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void> = {",
     "    instantiateContext?: (request: Request, response: Response) => Context | Promise<Context>",
@@ -533,7 +497,9 @@ const server = (
     "export const buildSchema =",
     "    <Context = void>() =>",
     `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
-    `    ({ Query, Mutation }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
+    `    ({ Query${
+      mutations ? ", Mutation" : ""
+    } }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
     ...typesFromConfiguration(schema, scalars, enums).map(
       (line) => `    ${line}`
     ),
@@ -549,8 +515,12 @@ const server = (
     "export const server =",
     "    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateContext }: EnodiaOptions<Request, Response, Context> = {}) =>",
     `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
-    `    ({ Query, Mutation }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
-    "    const schema = buildSchema<Context>()(fieldsConfiguration)({ Query, Mutation })",
+    `    ({ Query${
+      mutations ? ", Mutation" : ""
+    } }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
+    `    const schema = buildSchema<Context>()(fieldsConfiguration)({ Query${
+      mutations ? ", Mutation" : ""
+    } })`,
     "",
     "    return async (request: Request, response: Response) => {",
     "        let body = ''",
