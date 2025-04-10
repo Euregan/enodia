@@ -39,6 +39,7 @@ const clientTypes = (schema: DocumentNode, react: boolean) =>
       "type CallOptions = {",
       "  fetch?: typeof fetch;",
       "  cache?: boolean",
+      "  headers?: Record<string, string>",
       "};",
     ] as Array<string>
   )
@@ -337,6 +338,7 @@ const call = () =>
     "      }),",
     "      headers: {",
     "        'Content-Type': 'application/json',",
+    "        ...options.headers",
     "      },",
     "      credentials: 'include',",
     "    }).then((response: Response) => response.json());",

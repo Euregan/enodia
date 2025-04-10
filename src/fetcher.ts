@@ -13,7 +13,10 @@ const fetcher = async (
   // @ts-expect-error The types for node don't include fetch https://github.com/DefinitelyTyped/DefinitelyTyped/issues/60924
   const response = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...headers },
+    headers: {
+      "Content-Type": "application/json",
+      ...headers,
+    },
     body: JSON.stringify({ query: getIntrospectionQuery() }),
   });
 

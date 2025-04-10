@@ -9,9 +9,10 @@ import fetcher from "./fetcher.ts";
 import schemaToServer from "./server.ts";
 import prompts from "prompts";
 import { getCustomScalars } from "./generator/helpers.ts";
+import { getSchema, schemaConfigSchema } from "./schema.ts";
 
 const configSchema = z.object({
-  schema: z.string(),
+  schema: schemaConfigSchema,
   client: z
     .object({
       path: z.string(),
@@ -182,9 +183,7 @@ if (!validatedConfig.success) {
 const config = validatedConfig.data;
 
 console.log("- Fetching schema");
-const schema = config.schema.startsWith("http")
-  ? await fetcher(config.schema)
-  : parse(await readFile(config.schema, "utf-8"));
+const schema = await getSchema(config.schema);
 console.log("✓ Fetched schema");
 
 if (config.client) {
