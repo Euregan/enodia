@@ -1,8 +1,8 @@
 #!/usr/bin/env -S npx tsx
 
 import { access, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { parse } from "graphql";
+import path, { resolve } from "node:path";
+import { parse, print } from "graphql";
 import z from "zod";
 import schemaToClient from "./client.ts";
 import fetcher from "./fetcher.ts";
@@ -185,6 +185,18 @@ const config = validatedConfig.data;
 console.log("- Fetching schema");
 const schema = await getSchema(config.schema);
 console.log("✓ Fetched schema");
+
+// console.log(config);
+
+if (
+  typeof config.schema === "object" &&
+  "saveToFile" in config.schema &&
+  !config.schema.useLocalFile
+) {
+  console.log("- Saving schema to a local file");
+  await writeFile(config.schema.saveToFile, print(schema), "utf-8");
+  console.log("✓ Saved schema to", resolve(config.schema.saveToFile));
+}
 
 if (config.client) {
   console.log("- Writing client");
