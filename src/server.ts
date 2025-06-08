@@ -3,6 +3,7 @@ import {
   EnumTypeDefinitionNode,
   FieldDefinitionNode,
   InputObjectTypeDefinitionNode,
+  isListType,
   Kind,
   ObjectTypeDefinitionNode,
   TypeNode,
@@ -14,6 +15,7 @@ import {
   getCustomScalars,
   getMutations,
   getQueries,
+  gqlTypeToTsName,
   gqlTypeToTsString,
   isEnum,
   isGqlTypeOptional,
@@ -27,6 +29,32 @@ import {
 const toReturn = (type: string) => `${type} | Promise<${type}>`;
 
 const partialize = (type: string) => `Prettify<Omit<${type}, ${type}Keys>>`;
+
+const gqlTypeToReturnTsString = (
+  type: TypeNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>,
+  optional = true
+): string => {
+  switch (type.kind) {
+    case Kind.NAMED_TYPE:
+      const tsName = gqlTypeToTsName(type, scalars, enums);
+      const partialized =
+        !isScalar(type, scalars) && !isEnum(type, enums)
+          ? partialize(tsName)
+          : tsName;
+      return `${partialized}${optional ? " | undefined" : ""}`;
+    case Kind.LIST_TYPE:
+      return `Array<${gqlTypeToReturnTsString(
+        type.type.kind === Kind.NON_NULL_TYPE ? type.type.type : type.type,
+        scalars,
+        enums,
+        false
+      )}>${optional ? " | undefined" : ""}`;
+    case Kind.NON_NULL_TYPE:
+      return gqlTypeToReturnTsString(type.type, scalars, enums, false);
+  }
+};
 
 const queryFunctionParameters = (
   field: FieldDefinitionNode,
@@ -183,14 +211,14 @@ const fieldsResolversType = (
   const extenders = (node: ObjectTypeDefinitionNode) =>
     ["("]
       .concat(
-        (node.fields || []).map((field) => {
-          const type =
-            !isScalar(field.type, scalars) && !isEnum(field.type, enums)
-              ? partialize(gqlTypeToTsString(field.type, scalars, enums))
-              : gqlTypeToTsString(field.type, scalars, enums);
-
-          return `Key extends "${field.name.value}" ? ${type} : `;
-        })
+        (node.fields || []).map(
+          (field) =>
+            `Key extends "${field.name.value}" ? ${gqlTypeToReturnTsString(
+              field.type,
+              scalars,
+              enums
+            )} : `
+        )
       )
       .concat([" never", ")"])
       .join("");
@@ -229,21 +257,18 @@ const queriesAndMutationsResolversType = (
     queries && queries.fields
       ? ["    Query: {"]
           .concat(
-            queries.fields.map((field) => {
-              const returnType = gqlTypeToTsString(field.type, scalars, enums);
-
-              return `        ${field.name.value}: (${queryFunctionParameters(
-                field,
-                scalars,
-                enums
-              )}${
-                field.arguments && field.arguments.length > 0 ? ", " : ""
-              }context: Context) => ${toReturn(
-                !isScalar(field.type, scalars) && !isEnum(field.type, enums)
-                  ? partialize(returnType)
-                  : returnType
-              )}`;
-            })
+            queries.fields.map(
+              (field) =>
+                `        ${field.name.value}: (${queryFunctionParameters(
+                  field,
+                  scalars,
+                  enums
+                )}${
+                  field.arguments && field.arguments.length > 0 ? ", " : ""
+                }context: Context) => ${toReturn(
+                  gqlTypeToReturnTsString(field.type, scalars, enums)
+                )}`
+            )
           )
           .concat(["    }"])
       : [];
