@@ -183,14 +183,14 @@ const fieldsResolversType = (
   const extenders = (node: ObjectTypeDefinitionNode) =>
     ["("]
       .concat(
-        (node.fields || []).map(
-          (field) =>
-            `Key extends "${field.name.value}" ? ${gqlTypeToTsString(
-              field.type,
-              scalars,
-              enums
-            )} : `
-        )
+        (node.fields || []).map((field) => {
+          const type =
+            !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+              ? partialize(gqlTypeToTsString(field.type, scalars, enums))
+              : gqlTypeToTsString(field.type, scalars, enums);
+
+          return `Key extends "${field.name.value}" ? ${type} : `;
+        })
       )
       .concat([" never", ")"])
       .join("");
@@ -229,18 +229,21 @@ const queriesAndMutationsResolversType = (
     queries && queries.fields
       ? ["    Query: {"]
           .concat(
-            queries.fields.map(
-              (field) =>
-                `        ${field.name.value}: (${queryFunctionParameters(
-                  field,
-                  scalars,
-                  enums
-                )}${
-                  field.arguments && field.arguments.length > 0 ? ", " : ""
-                }context: Context) => ${toReturn(
-                  gqlTypeToTsString(field.type, scalars, enums)
-                )}`
-            )
+            queries.fields.map((field) => {
+              const returnType = gqlTypeToTsString(field.type, scalars, enums);
+
+              return `        ${field.name.value}: (${queryFunctionParameters(
+                field,
+                scalars,
+                enums
+              )}${
+                field.arguments && field.arguments.length > 0 ? ", " : ""
+              }context: Context) => ${toReturn(
+                !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+                  ? partialize(returnType)
+                  : returnType
+              )}`;
+            })
           )
           .concat(["    }"])
       : [];
