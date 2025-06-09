@@ -69,7 +69,10 @@ const queryFunctionParameters = (
             (arg) =>
               `${arg.name.value}${
                 isGqlTypeOptional(arg.type) ? "?" : ""
-              }: ${gqlTypeToTsString(arg.type, scalars, enums, "", false)}`
+              }: ${gqlTypeToTsString(
+                { type: arg.type, scalars, enums },
+                { suffix: "", optional: false }
+              )}`
           )
           .join(", ")} }${
           field.arguments.every((arg) => isGqlTypeOptional(arg.type))

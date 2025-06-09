@@ -90,27 +90,45 @@ export const gqlTypeToTsName = (
 };
 
 export const gqlTypeToTsString = (
-  type: TypeNode,
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>,
-  suffix?: string,
-  optional = true
+  {
+    type,
+    scalars,
+    enums,
+  }: {
+    type: TypeNode;
+    scalars: Array<GqlScalarToTs>;
+    enums: Array<EnumTypeDefinitionNode>;
+  },
+  {
+    suffix,
+    optional = true,
+    optionalAsUndefined = true,
+  }: {
+    suffix?: string;
+    optional?: boolean;
+    optionalAsUndefined?: boolean;
+  } = {}
 ): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE:
       return `${gqlTypeToTsName(type, scalars, enums, suffix)}${
-        optional ? " | undefined" : ""
+        optional && optionalAsUndefined ? " | undefined" : ""
       }`;
     case Kind.LIST_TYPE:
       return `Array<${gqlTypeToTsString(
-        type.type.kind === Kind.NON_NULL_TYPE ? type.type.type : type.type,
-        scalars,
-        enums,
-        suffix,
-        false
-      )}>${optional ? " | undefined" : ""}`;
+        {
+          type:
+            type.type.kind === Kind.NON_NULL_TYPE ? type.type.type : type.type,
+          scalars,
+          enums,
+        },
+        { suffix, optional: false, optionalAsUndefined }
+      )}>${optional && optionalAsUndefined ? " | undefined" : ""}`;
     case Kind.NON_NULL_TYPE:
-      return gqlTypeToTsString(type.type, scalars, enums, suffix, false);
+      return gqlTypeToTsString(
+        { type: type.type, scalars, enums },
+        { suffix, optional: false, optionalAsUndefined }
+      );
   }
 };
 
@@ -127,10 +145,11 @@ export const queryResult = (
   enums: Array<EnumTypeDefinitionNode>
 ) =>
   isScalar(type, scalars)
-    ? gqlTypeToTsString(type, scalars, enums)
-    : `${gqlTypeToTsString(type, scalars, enums, "Result<T>")}${
-        type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""
-      }`;
+    ? gqlTypeToTsString({ type, scalars, enums })
+    : `${gqlTypeToTsString(
+        { type, scalars, enums },
+        { suffix: "Result<T>", optionalAsUndefined: false }
+      )}${type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""}`;
 
 export const argsToTsDeclaration = (
   args: ReadonlyArray<InputValueDefinitionNode>,
@@ -319,9 +338,12 @@ export const queriesTypes = (
           (node.fields || []).map(
             (field) =>
               `  ${field.name.value}: ${gqlTypeToTsString(
-                field.type,
-                scalars,
-                enums
+                {
+                  type: field.type,
+                  scalars,
+                  enums,
+                },
+                { optionalAsUndefined: false }
               )}${field.type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""}`
           )
         )
@@ -391,7 +413,10 @@ export const queriesTypes = (
             (field) =>
               `  ${field.name.value}${
                 isGqlTypeOptional(field.type) ? "?" : ""
-              }: ${gqlTypeToTsString(field.type, scalars, enums, "", false)}`
+              }: ${gqlTypeToTsString(
+                { type: field.type, scalars, enums },
+                { suffix: "", optional: false }
+              )}`
           )
         )
         .concat(["};"])
