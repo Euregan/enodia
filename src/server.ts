@@ -279,7 +279,11 @@ const queriesAndMutationsResolversType = (
       ? ["    Mutation: {"]
           .concat(
             mutations.fields.map((field) => {
-              const returnType = gqlTypeToTsString(field.type, scalars, enums);
+              const returnType = gqlTypeToReturnTsString(
+                field.type,
+                scalars,
+                enums
+              );
               return `        ${field.name.value}: (${queryFunctionParameters(
                 field,
                 scalars,
