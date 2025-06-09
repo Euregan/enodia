@@ -505,7 +505,7 @@ const react = (
         "        }),",
         `    [${
           !isScalar(field.type, scalars) && !isEnum(field.type, enums)
-            ? "query"
+            ? "JSON.stringify(query)"
             : ""
         }${
           !isScalar(field.type, scalars) &&
@@ -514,7 +514,11 @@ const react = (
           field.arguments.length > 0
             ? ", "
             : ""
-        }${field.arguments && field.arguments.length > 0 ? "args" : ""}]`,
+        }${
+          field.arguments && field.arguments.length > 0
+            ? "JSON.stringify(args)"
+            : ""
+        }]`,
         "  );",
         "",
         "  useEffect(() => {",
@@ -542,7 +546,11 @@ const react = (
           !isScalar(field.type, scalars) && !isEnum(field.type, enums)
             ? ", JSON.stringify(query)"
             : ""
-        }${field.arguments && field.arguments.length > 0 ? ", args" : ""}]);`,
+        }${
+          field.arguments && field.arguments.length > 0
+            ? ", JSON.stringify(args)"
+            : ""
+        }]);`,
         "",
         "  if (error) {",
         "    return [false, error, null, fetch];",
