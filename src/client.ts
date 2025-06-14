@@ -412,7 +412,7 @@ const queryOrMutationFunctions = (
           isEnum(field.type, enums) || isScalar(field.type, scalars)
             ? "null"
             : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
-        }, "query", options),`,
+        }, "query", options).then(({ data }) => data.${field.name.value}),`,
       ].join("\n")
     )
     .join("\n");
