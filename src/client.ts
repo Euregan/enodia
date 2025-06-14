@@ -394,13 +394,15 @@ const queryOrMutationFunctions = (
                 scalars,
                 enums
               )}Query[number]>`
-        }(${queryFunctionParameters(field, scalars, enums)}): Promise<${
-          isScalar(field.type, scalars)
-            ? gqlTypeToTsName(field.type, scalars, enums)
-            : `${gqlTypeToTsName(field.type, scalars, enums)}Result<T>${
-                field.type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""
-              }`
-        }> => call(graphqlServerUrl, '${field.name.value}', ${
+        }(${queryFunctionParameters(
+          field,
+          scalars,
+          enums
+        )}): Promise<${queryResult(
+          field.type,
+          scalars,
+          enums
+        )}> => call(graphqlServerUrl, '${field.name.value}', ${
           !isScalar(field.type, scalars) ? "query" : "null"
         }${
           field.arguments && field.arguments.length > 0
