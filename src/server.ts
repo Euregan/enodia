@@ -3,7 +3,6 @@ import {
   EnumTypeDefinitionNode,
   FieldDefinitionNode,
   InputObjectTypeDefinitionNode,
-  isListType,
   Kind,
   ObjectTypeDefinitionNode,
   TypeNode,

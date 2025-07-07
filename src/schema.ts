@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 
 export const schemaConfigSchema = z.union([
   z.string(),
+  z.array(z.string()),
   z.object({
     url: z.string().url(),
     headers: z.record(z.string()).optional(),
@@ -27,6 +28,14 @@ export const getSchema = async (
     return schema.startsWith("http")
       ? fetcher(schema)
       : parse(await readFile(schema, "utf-8"));
+  }
+
+  if (Array.isArray(schema)) {
+    const fetchedSchemas = [];
+    for (const schemaToFetch of schema) {
+      fetchedSchemas.push(await readFile(schemaToFetch, "utf-8"));
+    }
+    return parse(fetchedSchemas.join("\n\n"));
   }
 
   if ("useLocalFile" in schema && schema.useLocalFile) {
