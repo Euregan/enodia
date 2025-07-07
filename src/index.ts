@@ -4,7 +4,7 @@ import { access, readFile, writeFile } from "node:fs/promises";
 import path, { resolve } from "node:path";
 import { parse, print } from "graphql";
 import z from "zod";
-import schemaToClient from "./client.ts";
+import schemaToClient from "./web.ts";
 import fetcher from "./fetcher.ts";
 import schemaToServer from "./server.ts";
 import prompts from "prompts";
@@ -185,8 +185,6 @@ const config = validatedConfig.data;
 console.log("- Fetching schema");
 const schema = await getSchema(config.schema);
 console.log("✓ Fetched schema");
-
-// console.log(config);
 
 if (
   typeof config.schema === "object" &&

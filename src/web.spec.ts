@@ -1,7 +1,7 @@
 import { beforeAll, expect, test, vi } from "vitest";
 import fs from "fs/promises";
 import { gql } from "graphql-tag";
-import schemaToClient from "./client";
+import schemaToClient from "./web";
 import ts from "typescript";
 
 beforeAll(async () => {
@@ -39,9 +39,8 @@ beforeAll(async () => {
       }
     `,
     {
-      url: "http://localhost:3000/graphql",
       scalarTypes: { Date: { name: "Date" } },
-      withReact: true,
+      withReact: { url: "http://localhost:3000/graphql" },
     }
   );
 
@@ -83,9 +82,8 @@ beforeAll(async () => {
       }
     `,
     {
-      url: "http://localhost:3000/graphql",
       scalarTypes: { Date: { name: "Date" } },
-      withReact: true,
+      withReact: { url: "http://localhost:3000/graphql" },
     }
   );
 
@@ -142,7 +140,7 @@ test("args generation for justQueries", async () => {
     fetch: vi.fn(async (_, { body }) => {
       query = JSON.parse(body).query;
       variables = JSON.parse(body).variables;
-      return { json: async () => ({}) };
+      return { json: async () => ({ data: [] }) };
     }),
   });
 
@@ -181,7 +179,7 @@ test("args generation for queriesAndMutations", async () => {
     fetch: vi.fn(async (_, { body }) => {
       query = JSON.parse(body).query;
       variables = JSON.parse(body).variables;
-      return { json: async () => ({}) };
+      return { json: async () => ({ data: [] }) };
     }),
   });
 

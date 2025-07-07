@@ -5,7 +5,7 @@
   "repository": "https://github.com/euregan/enodia",
   "homepage": "https://github.com/euregan/enodia",
   "bin": {
-    "enodia": "./src/cli.ts"
+    "enodia": "./src/index.ts"
   },
   "scripts": {
     "test": "vitest"
