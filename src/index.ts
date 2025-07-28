@@ -4,12 +4,13 @@ import { access, readFile, writeFile } from "node:fs/promises";
 import path, { resolve } from "node:path";
 import { parse, print } from "graphql";
 import z from "zod";
-import schemaToClient from "./web.ts";
+import schemaToWeb from "./web.ts";
 import fetcher from "./fetcher.ts";
 import schemaToServer from "./server.ts";
 import prompts from "prompts";
 import { getCustomScalars } from "./generator/helpers.ts";
 import { getSchema, schemaConfigSchema } from "./schema.ts";
+import { schemaToCli } from "./cli.ts";
 
 const configSchema = z.object({
   schema: schemaConfigSchema,
@@ -24,6 +25,11 @@ const configSchema = z.object({
     })
     .optional(),
   server: z
+    .object({
+      path: z.string(),
+    })
+    .optional(),
+  cli: z
     .object({
       path: z.string(),
     })
@@ -200,7 +206,7 @@ if (config.client) {
   console.log("- Writing client");
   await writeFile(
     config.client.path,
-    schemaToClient(schema, {
+    schemaToWeb(schema, {
       scalarTypes: config.scalars || {},
       withReact: config.client.react,
     })
@@ -217,4 +223,15 @@ if (config.server) {
     })
   );
   console.log("✓ Wrote server");
+}
+
+if (config.cli) {
+  console.log("- Writing cli");
+  await writeFile(
+    config.cli.path,
+    schemaToCli(schema, {
+      scalarTypes: config.scalars || {},
+    })
+  );
+  console.log("✓ Wrote cli");
 }

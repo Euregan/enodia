@@ -1,11 +1,11 @@
 import { beforeAll, expect, test, vi } from "vitest";
 import fs from "fs/promises";
 import { gql } from "graphql-tag";
-import schemaToClient from "./web";
+import schemaToWeb from "./web";
 import ts from "typescript";
 
 beforeAll(async () => {
-  const justQueries = schemaToClient(
+  const justQueries = schemaToWeb(
     gql`
       scalar Date
 
@@ -44,7 +44,7 @@ beforeAll(async () => {
     }
   );
 
-  const queriesAndMutations = schemaToClient(
+  const queriesAndMutations = schemaToWeb(
     gql`
       scalar Date
 
