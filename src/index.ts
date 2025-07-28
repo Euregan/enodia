@@ -211,7 +211,7 @@ if (config.client) {
       withReact: config.client.react,
     })
   );
-  console.log("✓ Wrote client");
+  console.log("✓ Wrote client at", resolve(config.client.path));
 }
 
 if (config.server) {
@@ -222,7 +222,7 @@ if (config.server) {
       scalarTypes: config.scalars || {},
     })
   );
-  console.log("✓ Wrote server");
+  console.log("✓ Wrote server at", resolve(config.server.path));
 }
 
 if (config.cli) {
@@ -233,5 +233,5 @@ if (config.cli) {
       scalarTypes: config.scalars || {},
     })
   );
-  console.log("✓ Wrote cli");
+  console.log("✓ Wrote cli at", resolve(config.cli.path));
 }
