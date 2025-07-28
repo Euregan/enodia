@@ -31,7 +31,7 @@ type Options = {
 const imports = () =>
   [
     "import React, { useState, useEffect, useMemo, ReactNode } from 'react';",
-    "import {render, Text, Box, useInput} from 'ink';",
+    "import { render, Text, Box, useInput, useStdout } from 'ink';",
   ].join("\n");
 
 const call = () =>
@@ -162,6 +162,21 @@ const client = (
   enums: Array<EnumTypeDefinitionNode>
 ) => {
   return [
+    "const useDimensions = (): [number, number] => {",
+    "  const { stdout } = useStdout();",
+    "  const [dimensions, setDimensions] = useState<[number, number]>([stdout.columns, stdout.rows]);",
+    "",
+    "  useEffect(() => {",
+    "    const handler = () => setDimensions([stdout.columns, stdout.rows]);",
+    "    stdout.on('resize', handler);",
+    "    return () => {",
+    "      stdout.off('resize', handler);",
+    "    };",
+    "  }, [stdout]);",
+    "",
+    "  return dimensions;",
+    "}",
+    "",
     "type SelectableListProps<Option> = {",
     "  height: number;",
     "  width: number;",
@@ -502,6 +517,7 @@ const client = (
     "}",
     "",
     "const QueryBuilder = ({ graphqlServerUrl, headers }) => {",
+    "  const [width, height] = useDimensions()",
     "  const [tree, setTree] = useState<SelectedTree<Field> | null>(null)",
     "",
     "  useInput((input, key) => {",
@@ -521,8 +537,8 @@ const client = (
     "",
     "  return !tree ? (",
     "    <SelectableList",
-    "      height={20}",
-    "      width={80}",
+    "      height={height}",
+    "      width={width}",
     "      options={Object.keys(queries).sort()}",
     "      option={{",
     "        id: (query) => query,",
@@ -540,8 +556,8 @@ const client = (
     "  ) : (",
     '    <Box flexDirection="column">',
     "      <SelectableTree",
-    "        height={19}",
-    "        width={80}",
+    "        height={height}",
+    "        width={width}",
     "        tree={tree}",
     "        onTreeChange={(newTree) =>",
     "          newTree",
