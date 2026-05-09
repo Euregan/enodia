@@ -15,6 +15,7 @@ import {
   getCustomScalars,
   getMutations,
   getQueries,
+  getSubscriptions,
   gqlTypeToGqlString,
   gqlTypeToTsName,
   isEnum,
@@ -120,6 +121,74 @@ const call = () =>
     "}",
   ].join("\n");
 
+const subscribe = () =>
+  [
+    "let websocketServer: WebSocket | null = null",
+    "const listeners = new Map<string, (result: any) => void>()",
+    "",
+    "const connect = (graphqlWebsocketUrl: string) => {",
+    "  websocketServer = new WebSocket(graphqlWebsocketUrl);",
+    "",
+    "  websocketServer.onopen = () => {",
+    '    websocketServer!.send(JSON.stringify({ type: "init" }));',
+    "  };",
+    "  websocketServer.onerror = console.error;",
+    "",
+    "  websocketServer.onmessage = (event) => {",
+    "    const message = JSON.parse(event.data);",
+    "",
+    "    if (listeners.has(message.id)) {",
+    "      listeners.get(message.id)!(message.result)",
+    "    }",
+    "  };",
+    "",
+    "  websocketServer.onclose = () => {",
+    "    const interval = setTimeout(async () => {",
+    "      websocketServer?.close();",
+    "      try {",
+    "        connect(graphqlWebsocketUrl);",
+    "      } finally {",
+    "        clearTimeout(interval);",
+    "      }",
+    "    }, 1000);",
+    "  };",
+    "};",
+    "",
+    "const subscribe = (",
+    "  callback: (result: any) => void,",
+    "  graphqlWebsocketUrl: string,",
+    "  query: string,",
+    "  returns: Fields,",
+    "  args: Record<string, Arguments> | undefined,",
+    "  argTypes: ArgumentTypes | undefined,",
+    "  queryType: keyof typeof queryToGqlTypes | null,",
+    ") => {",
+    "    if (!websocketServer) {",
+    "      connect(graphqlWebsocketUrl)",
+    "    }",
+    "",
+    "    const id = crypto.randomUUID();",
+    "",
+    "    listeners.set(id, callback)",
+    "",
+    "    websocketServer!.send(JSON.stringify({",
+    '      type: "query",',
+    "      id,",
+    "      query: `subscription ${query}${",
+    "          argTypes && args ? `(${argsToGql(argTypes, args, queryType, returns)})` : ''",
+    "        } {\\n ${query}${",
+    "          args ? `(${variablesToArgs(args)})` : ''",
+    "        }\\n ${fieldsToQuery(returns)} }`,",
+    "        variables: { ...args, ...returnsToVariables(returns) }",
+    "    }));",
+    "",
+    "    return () => {",
+    '      websocketServer!.send(JSON.stringify({ type: "unsubscribe", id }))',
+    "      listeners.delete(id)",
+    "    }",
+    "}",
+  ].join("\n");
+
 const queryFunctionParameters = (
   field: FieldDefinitionNode,
   scalars: Array<GqlScalarToTs>,
@@ -152,7 +221,8 @@ const gqlArgTypes = (args: readonly InputValueDefinitionNode[]) =>
 const queryOrMutationFunctions = (
   queries: ObjectTypeDefinitionNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
+  queryOrMutation: "query" | "mutation"
 ): string =>
   (queries.fields || [])
     .map((field) =>
@@ -183,7 +253,48 @@ const queryOrMutationFunctions = (
           isEnum(field.type, enums) || isScalar(field.type, scalars)
             ? "null"
             : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
-        }, "query", options).then(({ data }) => data.${field.name.value}),`,
+        }, "${queryOrMutation}", options).then(({ data }) => data.${
+          field.name.value
+        }),`,
+      ].join("\n")
+    )
+    .join("\n");
+
+const subscriptionFunction = (
+  queries: ObjectTypeDefinitionNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+): string =>
+  (queries.fields || [])
+    .map((field) =>
+      [
+        `    ${field.name.value}: ${
+          isScalar(field.type, scalars)
+            ? ""
+            : `<T extends ${gqlTypeToTsName(
+                field.type,
+                scalars,
+                enums
+              )}Query[number]>`
+        }(callback: (${field.name.value}: ${queryResult(
+          field.type,
+          scalars,
+          enums
+        )}) => void, ${queryFunctionParameters(
+          field,
+          scalars,
+          enums
+        )}) => subscribe(callback, graphqlWebsocketUrl, '${
+          field.name.value
+        }', ${!isScalar(field.type, scalars) ? "query" : "null"}${
+          field.arguments && field.arguments.length > 0
+            ? `, args, { ${gqlArgTypes(field.arguments)} }`
+            : ", undefined, undefined"
+        }, ${
+          isEnum(field.type, enums) || isScalar(field.type, scalars)
+            ? "null"
+            : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
+        }),`,
       ].join("\n")
     )
     .join("\n");
@@ -195,16 +306,21 @@ const client = (
 ) => {
   const queries = getQueries(schema);
   const mutations = getMutations(schema);
+  const subscriptions = getSubscriptions(schema);
 
   return (
     // TODO: Handle custom headers (i.e. for authentication)
-    [`const enodia = (graphqlServerUrl: string, options?: CallOptions) => ({`]
+    [
+      `const enodia = (graphqlServerUrl: string${
+        subscriptions ? ", graphqlWebsocketUrl: string" : ""
+      }, options?: CallOptions) => ({`,
+    ]
       .concat(
         queries
           ? [
               "  query: {",
-              queryOrMutationFunctions(queries, scalars, enums),
-              `  }${mutations ? "," : ""}`,
+              queryOrMutationFunctions(queries, scalars, enums, "query"),
+              "  },",
             ]
           : []
       )
@@ -212,8 +328,17 @@ const client = (
         mutations
           ? [
               "  mutation: {",
-              queryOrMutationFunctions(mutations, scalars, enums),
-              "  }",
+              queryOrMutationFunctions(mutations, scalars, enums, "mutation"),
+              "  },",
+            ]
+          : []
+      )
+      .concat(
+        subscriptions
+          ? [
+              "  subscription: {",
+              subscriptionFunction(subscriptions, scalars, enums),
+              "  },",
             ]
           : []
       )
@@ -223,13 +348,15 @@ const client = (
 };
 
 const react = (
-  url: string,
+  httpUrl: string,
+  wsUrl: string | null,
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>
 ) => {
   const queries = getQueries(schema);
   const mutations = getMutations(schema);
+  const subscriptions = getSubscriptions(schema);
 
   return (queries?.fields || [])
     .map((field) =>
@@ -258,7 +385,7 @@ const react = (
         "",
         "  const fetch = useCallback(",
         "    () =>",
-        `      call('${url}', '${field.name.value}', ${
+        `      call('${httpUrl}', '${field.name.value}', ${
           !isScalar(field.type, scalars) ? "query" : "null"
         }${
           field.arguments && field.arguments.length > 0
@@ -296,7 +423,7 @@ const react = (
         "",
         "  useEffect(() => {",
         "    if (!skip) {",
-        `      call('${url}', '${field.name.value}', ${
+        `      call('${httpUrl}', '${field.name.value}', ${
           !isScalar(field.type, scalars) ? "query" : "null"
         }${
           field.arguments && field.arguments.length > 0
@@ -379,7 +506,7 @@ const react = (
           "",
           "    setLoading(true);",
           "",
-          `    return call('${url}', '${field.name.value}', ${
+          `    return call('${httpUrl}', '${field.name.value}', ${
             !isScalar(field.type, scalars) ? "query" : "null"
           }${
             field.arguments && field.arguments.length > 0
@@ -422,6 +549,76 @@ const react = (
         ].join("\n")
       )
     )
+    .concat(
+      (subscriptions?.fields || []).map((field) =>
+        [
+          `export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
+            1
+          )}Subscription = ${
+            !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+              ? `<${fieldsConstraint(field.type, scalars, enums)}>`
+              : ""
+          }(`,
+          `  ${queryFunctionParameters(field, scalars, enums)}${
+            (!isScalar(field.type, scalars) && !isEnum(field.type, enums)) ||
+            (field.arguments && field.arguments.length > 0)
+              ? ", "
+              : ""
+          }skip?: boolean`,
+          `): SubscriptionResult<${queryResult(
+            field.type,
+            scalars,
+            enums
+          )}> => {`,
+          "  const [error, setError] = useState<Error | null>(null);",
+          "  // We use undefined as the empty value so we can discriminate between the loading state and the null returned by the API",
+          `  const [data, setData] = useState<${queryResult(
+            field.type,
+            scalars,
+            enums
+          )} | undefined>(undefined);`,
+          "",
+          "  useEffect(() => {",
+          "    if (!skip) {",
+          `      const unsubscribe = subscribe(({ data }) => setData(data.${
+            field.name.value
+          }), '${wsUrl}', '${field.name.value}', ${
+            !isScalar(field.type, scalars) ? "query" : "null"
+          }${
+            field.arguments && field.arguments.length > 0
+              ? `, args, { ${gqlArgTypes(field.arguments)} }`
+              : ", undefined, undefined"
+          }, ${
+            isEnum(field.type, enums) || isScalar(field.type, scalars)
+              ? "null"
+              : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
+          })`,
+          "",
+          "      return unsubscribe",
+          "    }",
+          `  }, [skip${
+            !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+              ? ", JSON.stringify(query)"
+              : ""
+          }${
+            field.arguments && field.arguments.length > 0
+              ? ", JSON.stringify(args)"
+              : ""
+          }]);`,
+          "",
+          "  if (error) {",
+          "    return [false, error, null];",
+          "  }",
+          "",
+          "  if (data !== undefined) {",
+          "    return [false, null, data];",
+          "  }",
+          "",
+          "  return [true, null, null];",
+          "}",
+        ].join("\n")
+      )
+    )
     .join("\n\n");
 };
 
@@ -429,7 +626,7 @@ const react = (
 
 type Options = {
   scalarTypes: Record<string, ScalarType>;
-  withReact?: { url: string };
+  withReact?: { httpUrl: string; wsUrl: string | null };
 };
 
 const schemaToWeb = (
@@ -471,9 +668,12 @@ const schemaToWeb = (
     returnsToVariables(),
     cache(),
     call(),
+    subscribe(),
     queriesTypes(schema, scalars, enums),
     client(schema, scalars, enums),
-    withReact ? react(withReact.url, schema, scalars, enums) : "",
+    withReact
+      ? react(withReact.httpUrl, withReact.wsUrl, schema, scalars, enums)
+      : "",
   ].join("\n\n");
 };
 

@@ -183,6 +183,13 @@ export const getMutations = (schema: DocumentNode) =>
       node.name.value === "Mutation"
   ) as ObjectTypeDefinitionNode | undefined;
 
+export const getSubscriptions = (schema: DocumentNode) =>
+  schema.definitions.find(
+    (node) =>
+      node.kind === Kind.OBJECT_TYPE_DEFINITION &&
+      node.name.value === "Subscription"
+  ) as ObjectTypeDefinitionNode | undefined;
+
 // Generators
 
 // TODO: Group imports from same file together
@@ -243,7 +250,7 @@ export const types = (
           (node) =>
             node.kind === Kind.OBJECT_TYPE_DEFINITION &&
             // We don't expose these types
-            !["Query", "Mutation"].includes(node.name.value)
+            !["Query", "Mutation", "Subscription"].includes(node.name.value)
         ) as Array<ObjectTypeDefinitionNode>
       ).map(
         (node) =>
@@ -304,7 +311,7 @@ export const queriesTypes = (
       (node) =>
         node.kind === Kind.OBJECT_TYPE_DEFINITION &&
         // We don't expose these types
-        !["Query", "Mutation"].includes(node.name.value)
+        !["Query", "Mutation", "Subscription"].includes(node.name.value)
     ) as Array<ObjectTypeDefinitionNode>
   )
     .map((node) =>
@@ -328,7 +335,7 @@ export const queriesTypes = (
       (node) =>
         node.kind === Kind.OBJECT_TYPE_DEFINITION &&
         // We don't expose these types
-        !["Query", "Mutation"].includes(node.name.value) &&
+        !["Query", "Mutation", "Subscription"].includes(node.name.value) &&
         !isEnum(node, enums)
     ) as Array<ObjectTypeDefinitionNode>
   )
@@ -357,7 +364,7 @@ export const queriesTypes = (
       (node) =>
         node.kind === Kind.OBJECT_TYPE_DEFINITION &&
         // We don't expose these types
-        !["Query", "Mutation"].includes(node.name.value) &&
+        !["Query", "Mutation", "Subscription"].includes(node.name.value) &&
         !isEnum(node, enums)
     ) as Array<ObjectTypeDefinitionNode>
   )

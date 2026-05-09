@@ -14,6 +14,7 @@ import {
   getCustomScalars,
   getMutations,
   getQueries,
+  getSubscriptions,
   gqlTypeToTsName,
   gqlTypeToTsString,
   isEnum,
@@ -91,7 +92,7 @@ const fieldResolversContraint = (
     (node) =>
       node.kind === Kind.OBJECT_TYPE_DEFINITION &&
       // These types are not concerned by resolver contraints
-      !["Query", "Mutation"].includes(node.name.value) &&
+      !["Query", "Mutation", "Subscription"].includes(node.name.value) &&
       !isEnum(node, enums)
   ) as Array<ObjectTypeDefinitionNode>;
 
@@ -108,7 +109,7 @@ const fieldResolversGenericSpread = (
     (node) =>
       node.kind === Kind.OBJECT_TYPE_DEFINITION &&
       // These types are not concerned by resolver contraints
-      !["Query", "Mutation"].includes(node.name.value) &&
+      !["Query", "Mutation", "Subscription"].includes(node.name.value) &&
       !isEnum(node, enums)
   ) as Array<ObjectTypeDefinitionNode>;
 
@@ -160,8 +161,10 @@ const fieldTypeToSchemaType = (
 
 // Generators
 
-const imports = () =>
-  [
+const imports = (schema: DocumentNode) => {
+  const subscriptions = getSubscriptions(schema);
+
+  return [
     'import { IncomingMessage, ServerResponse } from "http"',
     `import { ${[
       "graphql",
@@ -177,8 +180,25 @@ const imports = () =>
       "GraphQLInt",
       "GraphQLFloat",
       "GraphQLBoolean",
-    ].join(", ")} } from "graphql"`,
-  ].join("\n");
+    ]
+      .concat(
+        subscriptions
+          ? ["parse", "validate", "TypeInfo", "visit", "visitWithTypeInfo"]
+          : []
+      )
+      .join(", ")} } from "graphql"`,
+  ]
+    .concat(
+      subscriptions
+        ? [
+            'import { WebSocketServer, WebSocket } from "ws"',
+            'import z from "zod"',
+            'import { randomUUID } from "crypto"',
+          ]
+        : []
+    )
+    .join("\n");
+};
 
 const serverTypes = () =>
   [
@@ -204,7 +224,7 @@ const fieldsResolversType = (
     (node) =>
       node.kind === Kind.OBJECT_TYPE_DEFINITION &&
       // These types are not concerned by resolver contraints
-      !["Query", "Mutation"].includes(node.name.value) &&
+      !["Query", "Mutation", "Subscription"].includes(node.name.value) &&
       !isEnum(node, enums)
   ) as Array<ObjectTypeDefinitionNode>;
 
@@ -245,6 +265,104 @@ const fieldsResolversType = (
     .concat(partialResolvers)
     .concat(["}"])
     .join("\n");
+};
+
+const subscriptionTypes = (
+  schema: DocumentNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>
+) => {
+  const subscriptions = getSubscriptions(schema);
+
+  if (!subscriptions) {
+    return "";
+  }
+
+  return [
+    "type SubscribedQuery = {",
+    "  id: string;",
+    "  query: string;",
+    "  variables: Record<string, unknown> | undefined;",
+    "};",
+    "",
+    "type ConnectedSocket<Context> = {",
+    "  id: string;",
+    "  context: Context;",
+    "  socket: WebSocket;",
+    "  queries: Map<string, SubscribedQuery>;",
+    "}",
+    "",
+    "type Updated =",
+  ]
+    .concat(
+      (
+        schema.definitions.filter(
+          (node) =>
+            node.kind === Kind.OBJECT_TYPE_DEFINITION &&
+            // We don't expose these types
+            !["Query", "Mutation", "Subscription"].includes(node.name.value)
+        ) as Array<ObjectTypeDefinitionNode>
+      ).map(
+        (node) =>
+          `  | { entity: "${node.name.value}"; fields?: Array<keyof ${node.name.value}> }`
+      )
+    )
+    .join("\n");
+};
+
+const subscriptionHelpers = (schema: DocumentNode) => {
+  const subscriptions = getSubscriptions(schema);
+
+  if (!subscriptions) {
+    return "";
+  }
+
+  return [
+    'const inboundMessageSchema = z.discriminatedUnion("type", [',
+    '  z.object({ type: z.literal("init"), payload: z.any().optional() }),',
+    '  z.object({ type: z.literal("subscribe"), id: z.string(), query: z.string(), variables: z.record(z.unknown()).optional() }),',
+    '  z.object({ type: z.literal("unsubscribe"), id: z.string(), query: z.string(), variables: z.record(z.unknown()).optional() })',
+    "])",
+    "",
+    "const listTypesAndFields = (schema: GraphQLSchema, query: string) => {",
+    "  const documentAST = parse(query);",
+    "  const errors = validate(schema, documentAST);",
+    "",
+    "  if (errors.length > 0) {",
+    "    throw new Error(",
+    "      `Query validation failed: ${errors.map((e) => e.message).join(', ')}}`",
+    "    );",
+    "  }",
+    "",
+    "  const typeInfo = new TypeInfo(schema);",
+    "  const typesAndFields = new Map<string, Set<string>>();",
+    "  visit(",
+    "    documentAST,",
+    "    visitWithTypeInfo(typeInfo, {",
+    "      Field(node) {",
+    "        const parentType = typeInfo.getParentType();",
+    "        const fieldName = node.name.value;",
+    "",
+    "        if (parentType) {",
+    "          const typeName = parentType.name;",
+    "",
+    "          if (!typesAndFields.has(typeName)) {",
+    "            typesAndFields.set(typeName, new Set());",
+    "          }",
+    "          typesAndFields.get(typeName)!.add(fieldName);",
+    "        }",
+    "      },",
+    "    })",
+    "  );",
+    "",
+    "  const result: Record<string, Array<string>> = {};",
+    "  for (const [typeName, fields] of typesAndFields) {",
+    "    result[typeName] = Array.from(fields);",
+    "  }",
+    "",
+    "  return result;",
+    "};",
+  ].join("\n");
 };
 
 const queriesAndMutationsResolversType = (
@@ -298,11 +416,35 @@ const queriesAndMutationsResolversType = (
           .concat(["    }"])
       : [];
 
+  const subscriptions = getSubscriptions(schema);
+  const subscription =
+    subscriptions && subscriptions.fields
+      ? ["    Subscription: {"]
+          .concat(
+            subscriptions.fields.map((field) => {
+              const returnType = gqlTypeToReturnTsString(
+                field.type,
+                scalars,
+                enums
+              );
+              return `        ${field.name.value}: (${queryFunctionParameters(
+                field,
+                scalars,
+                enums
+              )}${
+                field.arguments && field.arguments.length > 0 ? ", " : ""
+              }context: Context) => DetailedResponse<${returnType}> | ${returnType} | Promise<DetailedResponse<${returnType}> | ${returnType}>`;
+            })
+          )
+          .concat(["    }"])
+      : [];
+
   return [
     `export type QueriesAndMutationsResolvers<Context, ${partialResolverConstraints}> = {`,
   ]
     .concat(query)
     .concat(mutation)
+    .concat(subscription)
     .concat(["}"])
     .join("\n");
 };
@@ -316,7 +458,7 @@ const typesFromConfiguration = (
     (node) =>
       node.kind === Kind.OBJECT_TYPE_DEFINITION &&
       // These types are not concerned by resolver contraints
-      !["Query", "Mutation"].includes(node.name.value) &&
+      !["Query", "Mutation", "Subscription"].includes(node.name.value) &&
       !isEnum(node, enums)
   ) as Array<ObjectTypeDefinitionNode>;
 
@@ -396,7 +538,7 @@ const schemaFromConfiguration = (
     (node) =>
       node.kind === Kind.OBJECT_TYPE_DEFINITION &&
       // These types are not concerned by resolver contraints
-      !["Query", "Mutation"].includes(node.name.value) &&
+      !["Query", "Mutation", "Subscription"].includes(node.name.value) &&
       !isEnum(node, enums)
   ) as Array<ObjectTypeDefinitionNode>;
 
@@ -489,11 +631,61 @@ const schemaFromConfiguration = (
         ]
       : [];
 
+  const subscriptions = getSubscriptions(schema);
+
+  const subscriptionFields =
+    subscriptions && subscriptions.fields
+      ? subscriptions.fields.flatMap((field) => [
+          `            ${field.name.value}: {`,
+          `                type: ${fieldTypeToSchemaType(
+            field.type,
+            scalars,
+            enums
+          )},`,
+          "                args: {",
+          ...(field.arguments || []).map(
+            (arg) =>
+              `                    ${
+                arg.name.value
+              }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`
+          ),
+          "                },",
+          "                resolve: async (source, args, context, info) => {",
+          `                    const result = await Subscription.${
+            field.name.value
+          }(${
+            field.arguments && field.arguments.length > 0 ? "args, " : ""
+          }context.userContext)`,
+          "",
+          "                    if (result instanceof DetailedResponse) {",
+          "                        context.response.setHeaders(new Map(Object.entries(result.headers)))",
+          "                        context.response.setHeader('Set-Cookie', Object.entries(result.cookies).map(([key, value]) => `${key}=${value}`))",
+          "                    }",
+          "",
+          "                    return result instanceof DetailedResponse ? result.content : result",
+          "                }",
+          "            },",
+        ])
+      : [];
+
+  const subscription =
+    subscriptionFields.length > 0
+      ? [
+          "    subscription: new GraphQLObjectType({",
+          '        name: "Subscription",',
+          "        fields: {",
+          ...subscriptionFields,
+          "        },",
+          "    }),",
+        ]
+      : [];
+
   return [
     "const schema = new GraphQLSchema({",
     "    assumeValid: true,",
     ...query,
     ...mutation,
+    ...subscription,
     "    types: [",
     ...[
       `        ${scalars
@@ -522,67 +714,166 @@ const server = (
   const resolversGenerics = fieldResolversGenericSpread(schema, enums);
 
   const mutations = getMutations(schema);
+  const subscriptions = getSubscriptions(schema);
 
   return [
     "type EnodiaOptions<Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void> = {",
-    "    instantiateContext?: (request: Request, response: Response) => Context | Promise<Context>",
-    "}",
-    "",
-    "export const buildSchema =",
-    "    <Context = void>() =>",
-    `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
-    `    ({ Query${
-      mutations ? ", Mutation" : ""
-    } }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
-    ...typesFromConfiguration(schema, scalars, enums).map(
-      (line) => `    ${line}`
-    ),
-    "    Object.entries(fieldsConfiguration)",
-    "",
-    ...schemaFromConfiguration(schema, scalars, enums).map(
-      (line) => `    ${line}`
-    ),
-    "",
-    "    return schema",
-    "}",
-    "",
-    "export const server =",
-    "    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateContext }: EnodiaOptions<Request, Response, Context> = {}) =>",
-    `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
-    `    ({ Query${
-      mutations ? ", Mutation" : ""
-    } }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
-    `    const schema = buildSchema<Context>()(fieldsConfiguration)({ Query${
-      mutations ? ", Mutation" : ""
-    } })`,
-    "",
-    "    return async (request: Request, response: Response) => {",
-    "        let body = ''",
-    "",
-    "        request.on('data', (chunk) => {",
-    "            body += chunk.toString()",
-    "        })",
-    "",
-    "        request.on('end', async () => {",
-    "            const { query, variables } = global.JSON.parse(body)",
-    "",
-    "            const result = await graphql({",
-    "                schema,",
-    "                source: query,",
-    "                variableValues: variables,",
-    "                contextValue: {",
-    "                    request,",
-    "                    response,",
-    "                    userContext: await instantiateContext?.(request, response)",
-    "                },",
-    "            })",
-    "",
-    "            response.statusCode = 200",
-    "            response.end(global.JSON.stringify(result))",
-    "        })",
-    "    }",
-    "}",
-  ].join("\n");
+    "    instantiateHttpContext?: (request: Request, response: Response) => Context | Promise<Context>",
+  ]
+    .concat(
+      subscriptions
+        ? [
+            "    instantiateWebsocketContext?: (payload: any) => Context | Promise<Context>",
+          ]
+        : []
+    )
+    .concat([
+      "}",
+      "",
+      "export const buildSchema =",
+      "    <Context = void>() =>",
+      `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
+      `    ({ Query${mutations ? ", Mutation" : ""}${
+        subscriptions ? ", Subscription" : ""
+      } }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
+      ...typesFromConfiguration(schema, scalars, enums).map(
+        (line) => `    ${line}`
+      ),
+      "",
+      ...schemaFromConfiguration(schema, scalars, enums).map(
+        (line) => `    ${line}`
+      ),
+      "",
+      "    return schema",
+      "}",
+      "",
+      "export const server =",
+      `    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateHttpContext${
+        subscriptions ? ", instantiateWebsocketContext" : ""
+      } }: EnodiaOptions<Request, Response, Context> = {}) =>`,
+      `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
+      `    ({ Query${mutations ? ", Mutation" : ""}${
+        subscriptions ? ", Subscription" : ""
+      } }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
+      `    const schema = buildSchema<Context>()(fieldsConfiguration)({ Query${
+        mutations ? ", Mutation" : ""
+      }${subscriptions ? ", Subscription" : ""} })`,
+      "",
+      "    const execute = (",
+      "      query: string,",
+      "      variables: Record<string, unknown> | undefined,",
+      "      context: unknown",
+      "    ) =>",
+      "      graphql({",
+      "        schema,",
+      "        source: query,",
+      "        variableValues: variables,",
+      "        contextValue: context,",
+      "      });",
+      "",
+      "    return {",
+      "      http: async (request: Request, response: Response) => {",
+      '        let body = "";',
+      "",
+      '        request.on("data", (chunk) => {',
+      "          body += chunk.toString();",
+      "        });",
+      "",
+      '        request.on("end", async () => {',
+      "          const { query, variables } = global.JSON.parse(body);",
+      "",
+      "          const result = await execute(query, variables, {",
+      "            request,",
+      "            response,",
+      "            userContext: await instantiateHttpContext?.(request, response),",
+      "          });",
+      "",
+      "          response.statusCode = 200;",
+      "          response.end(global.JSON.stringify(result));",
+      "        });",
+      "      },",
+    ])
+    .concat(
+      subscriptions
+        ? [
+            "      websocket: (port: number) => {",
+            "        const connectedSockets = new Map<string, ConnectedSocket<Context>>();",
+            "",
+            "        const server = new WebSocketServer({ port });",
+            "",
+            "        const executeQuery = async (id:string, query:string, variables: Record<string, unknown> | undefined, context: Context) =>",
+            "          JSON.stringify({",
+            '              type: "query",',
+            "              id,",
+            "              result: await execute(query, variables, {",
+            "                userContext: context,",
+            "              }),",
+            "            })",
+            "",
+            "        server.on('connection', (socket) => {",
+            "          const id = randomUUID()",
+            "",
+            "          socket.on('message', async (data) => {",
+            "            const messageValidation = inboundMessageSchema.safeParse(JSON.parse(data.toString()))",
+            "            if (!messageValidation.success) return",
+            "",
+            "            const message = messageValidation.data",
+            "            switch (message.type) {",
+            '              case "init":',
+            "                connectedSockets.set(id, {",
+            "                  id,",
+            "                  socket,",
+            "                  context: (await instantiateWebsocketContext?.(message.payload)) as Context,",
+            "                  queries: new Map()",
+            "                })",
+            "",
+            '                socket.send(JSON.stringify({ type: "initialized" }))',
+            "",
+            "                break",
+            '              case "subscribe":',
+            "                if (connectedSockets.has(id)) {",
+            "                  const socket = connectedSockets.get(id)!",
+            "                  socket.queries.set(message.id, { id: message.id, query: message.query, variables: message.variables })",
+            "",
+            '                  socket.socket.send(JSON.stringify({ type: "subscribed" }))',
+            "                  socket.socket.send(await executeQuery(message.id, message.query, message.variables, socket.context));",
+            "                }",
+            "                break",
+            '              case "unsubscribe":',
+            "                if (connectedSockets.has(id)) {",
+            "                  const socket = connectedSockets.get(id)!",
+            "                  socket.queries.delete(id)",
+            "",
+            '                  socket.socket.send(JSON.stringify({ type: "unsubscribed" }))',
+            "                }",
+            "                break",
+            "            }",
+            "          });",
+            "",
+            "          socket.on('close', () => {",
+            "            connectedSockets.delete(id)",
+            "          });",
+            "        });",
+            "",
+            "        return async (updated: Array<Updated>) => {",
+            "          const matchingQueriesAndTheirSockets = [...connectedSockets.values()].flatMap(socket => [...socket.queries.values()].filter(query => {",
+            "            const typesAndFields = listTypesAndFields(schema, query.query)",
+            "",
+            "            return updated.some(updated => updated.entity in typesAndFields",
+            "              && (!updated.fields || updated.fields.some(field => typesAndFields[updated.entity].includes(field))))",
+            "          }).map(query => [socket, query] as const));",
+            "",
+            "          for (const [socket, query] of matchingQueriesAndTheirSockets) {",
+            "            socket.socket.send(await executeQuery(query.id, query.query, query.variables, socket.context));",
+            "          }",
+            "        };",
+            "      },",
+            "    };",
+            "}",
+          ]
+        : []
+    )
+    .join("\n");
 };
 
 // Server generator
@@ -613,13 +904,15 @@ const schemaToServer = (schema: DocumentNode, { scalarTypes }: Options) => {
   ) as Array<EnumTypeDefinitionNode>;
 
   return [
-    imports(),
+    imports(schema),
     customScalarsImports(scalarTypes, customScalars),
     types(schema, scalars, enums),
     serverTypes(),
     queriesTypes(schema, scalars, enums),
     fieldsResolversType(schema, scalars, enums),
     queriesAndMutationsResolversType(schema, scalars, enums),
+    subscriptionTypes(schema, scalars, enums),
+    subscriptionHelpers(schema),
     server(schema, scalars, enums),
   ].join("\n\n");
 };

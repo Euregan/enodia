@@ -1,7 +1,6 @@
 import {
   DocumentNode,
   EnumTypeDefinitionNode,
-  FieldDefinitionNode,
   Kind,
   ObjectTypeDefinitionNode,
   TypeNode,
@@ -156,11 +155,7 @@ const typesFields = (
     "}",
   ].join("\n");
 
-const client = (
-  schema: DocumentNode,
-  scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
-) => {
+const client = () => {
   return [
     "const useDimensions = (): [number, number] => {",
     "  const { stdout } = useStdout();",
@@ -610,6 +605,6 @@ export const schemaToCli = (schema: DocumentNode, { scalarTypes }: Options) => {
     variablesToArgs(),
     returnsToVariables(),
     call(),
-    client(schema, scalars, enums),
+    client(),
   ].join("\n\n");
 };

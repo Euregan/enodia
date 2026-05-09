@@ -7,6 +7,7 @@ import {
 import {
   getMutations,
   getQueries,
+  getSubscriptions,
   gqlTypeToGqlString,
   gqlTypeToTsName,
   isEnum,
@@ -91,6 +92,35 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
           ]
         : []
     )
+    .concat(
+      react && getSubscriptions(schema)
+        ? [
+            "",
+            "/**",
+            " * The type returned by the subscription hook.",
+            " */",
+            "type SubscriptionResult<Data> =",
+            "  /**",
+            "   * If the inital call is still running, then it returns a simple",
+            "   * array with `true` as the first element. The next two elements",
+            "   * are `null`.",
+            "   */",
+            "  | readonly [true, null, null]",
+            "  /**",
+            "   * If the initial call has errored, the array contains `false` as",
+            "   * the loading variable, then the error that happened, and finally",
+            "   * `null` for the result.",
+            "   */",
+            "  | readonly [false, Error, null]",
+            "  /**",
+            "   * If the call has come through, the array contains `false` as the",
+            "   * loading variable, `null` for the error, and finally the data",
+            "   * returned by the API.",
+            "   */",
+            "  | readonly [false, null, Data];",
+          ]
+        : []
+    )
     .join("\n");
 
 export const queryArgsToTypes = (
@@ -105,7 +135,7 @@ export const queryArgsToTypes = (
           (node) =>
             node.kind === Kind.OBJECT_TYPE_DEFINITION &&
             // We don't expose these types
-            !["Query", "Mutation"].includes(node.name.value)
+            !["Query", "Mutation", "Subscription"].includes(node.name.value)
         ) as Array<ObjectTypeDefinitionNode>
       ).map(
         (node) =>

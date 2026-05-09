@@ -19,7 +19,8 @@ const configSchema = z.object({
       path: z.string(),
       react: z
         .object({
-          url: z.string(),
+          httpUrl: z.string(),
+          wsUrl: z.string().optional().nullable().default(null),
         })
         .optional(),
     })

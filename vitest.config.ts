@@ -6,6 +6,7 @@ export default defineConfig({
     watchExclude: [
       ...configDefaults.watchExclude,
       "**/generated-tests-files/**",
+      "**/subscription.server.ts",
     ],
   },
 });
