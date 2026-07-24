@@ -32,16 +32,19 @@ beforeAll(async () => {
         postedAt: Date!
       }
 
+      union Feed = Post | Comment
+
       type Query {
         user(id: ID!): User
         users: [User]!
         userCount: Int!
+        feed: [Feed!]!
       }
     `,
     {
       scalarTypes: { Date: { name: "Date" } },
       withReact: { url: "http://localhost:3000/graphql" },
-    }
+    },
   );
 
   const queriesAndMutations = schemaToWeb(
@@ -71,10 +74,13 @@ beforeAll(async () => {
         postedAt: Date!
       }
 
+      union Feed = Post | Comment
+
       type Query {
         user(id: ID!): User
         users: [User]!
         userCount: Int!
+        feed: [Feed!]!
       }
 
       type Mutation {
@@ -84,7 +90,7 @@ beforeAll(async () => {
     {
       scalarTypes: { Date: { name: "Date" } },
       withReact: { url: "http://localhost:3000/graphql" },
-    }
+    },
   );
 
   // The path is relative to the root of the project
@@ -92,7 +98,7 @@ beforeAll(async () => {
   await fs.writeFile("./generated-tests-files/justQueries.ts", justQueries);
   await fs.writeFile(
     "./generated-tests-files/queriesAndMutations.ts",
-    queriesAndMutations
+    queriesAndMutations,
   );
 });
 
@@ -120,12 +126,12 @@ test.each(["justQueries", "queriesAndMutations"])(
         ts
           .getPreEmitDiagnostics(program)
           .concat(program.emit().diagnostics)
-          .map((error) => error.messageText)
+          .map((error) => error.messageText),
       );
     }
 
     expect(errors).toHaveLength(0);
-  }
+  },
 );
 
 test("args generation for justQueries", async () => {
@@ -158,12 +164,42 @@ test("args generation for justQueries", async () => {
           ],
         },
       ],
-      { id: "user-875f-4277-8de0-4501f8b58070" }
-    )
+      { id: "user-875f-4277-8de0-4501f8b58070" },
+    ),
   );
 
   expect(query).toMatchSnapshot();
   expect(variables).toMatchSnapshot();
+});
+
+test("union query generation", async () => {
+  let query = "";
+
+  const justQueries = (await import("../generated-tests-files/justQueries"))
+    .default;
+
+  const client = justQueries("", {
+    // @ts-ignore
+    fetch: vi.fn(async (_, { body }) => {
+      query = JSON.parse(body).query;
+      return { json: async () => ({ data: { feed: [] } }) };
+    }),
+  });
+
+  await client.query.feed([
+    "__typename",
+    {
+      $on: {
+        Post: ["content", { comments: ["content"] }],
+        Comment: ["content"],
+      },
+    },
+  ]);
+
+  expect(query).toContain("... on Post");
+  expect(query).toContain("... on Comment");
+  expect(query).toContain("__typename");
+  expect(query).toMatchSnapshot();
 });
 
 test("args generation for queriesAndMutations", async () => {
@@ -197,8 +233,8 @@ test("args generation for queriesAndMutations", async () => {
           ],
         },
       ],
-      { id: "user-875f-4277-8de0-4501f8b58070" }
-    )
+      { id: "user-875f-4277-8de0-4501f8b58070" },
+    ),
   );
 
   expect(query).toMatchSnapshot();

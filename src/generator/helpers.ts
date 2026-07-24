@@ -8,6 +8,7 @@ import {
   ObjectTypeDefinitionNode,
   ScalarTypeDefinitionNode,
   TypeNode,
+  UnionTypeDefinitionNode,
 } from "graphql";
 import { GqlScalarToTs, ScalarType } from "../types.ts";
 
@@ -23,12 +24,12 @@ export const baseScalars: Array<GqlScalarToTs> = [
 
 export const getCustomScalars = (schema: DocumentNode) =>
   schema.definitions.filter(
-    (node) => node.kind === Kind.SCALAR_TYPE_DEFINITION
+    (node) => node.kind === Kind.SCALAR_TYPE_DEFINITION,
   ) as Array<ScalarTypeDefinitionNode>;
 
 export const isEnum = (
   type: TypeNode | ObjectTypeDefinitionNode,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ): boolean => {
   switch (type.kind) {
     case Kind.OBJECT_TYPE_DEFINITION:
@@ -42,9 +43,22 @@ export const isEnum = (
   }
 };
 
+export const isUnion = (
+  type: TypeNode,
+  unions: Array<UnionTypeDefinitionNode>,
+): boolean => {
+  switch (type.kind) {
+    case Kind.NAMED_TYPE:
+      return unions.some((union) => union.name.value === type.name.value);
+    case Kind.LIST_TYPE:
+    case Kind.NON_NULL_TYPE:
+      return isUnion(type.type, unions);
+  }
+};
+
 export const isScalar = (
   type: TypeNode,
-  scalars: Array<GqlScalarToTs>
+  scalars: Array<GqlScalarToTs>,
 ): boolean => {
   switch (type.kind) {
     case Kind.NAMED_TYPE:
@@ -74,7 +88,7 @@ export const gqlTypeToTsName = (
   type: TypeNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
-  suffix?: string
+  suffix?: string,
 ): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE: {
@@ -107,7 +121,7 @@ export const gqlTypeToTsString = (
     suffix?: string;
     optional?: boolean;
     optionalAsUndefined?: boolean;
-  } = {}
+  } = {},
 ): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE:
@@ -122,12 +136,12 @@ export const gqlTypeToTsString = (
           scalars,
           enums,
         },
-        { suffix, optional: false, optionalAsUndefined }
+        { suffix, optional: false, optionalAsUndefined },
       )}>${optional && optionalAsUndefined ? " | undefined" : ""}`;
     case Kind.NON_NULL_TYPE:
       return gqlTypeToTsString(
         { type: type.type, scalars, enums },
-        { suffix, optional: false, optionalAsUndefined }
+        { suffix, optional: false, optionalAsUndefined },
       );
   }
 };
@@ -136,26 +150,26 @@ export const fieldsConstraint = (
   type: TypeNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
-  generic = "T"
+  generic = "T",
 ) => `${generic} extends ${gqlTypeToTsName(type, scalars, enums)}Query[number]`;
 
 export const queryResult = (
   type: TypeNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ) =>
   isScalar(type, scalars)
     ? gqlTypeToTsString({ type, scalars, enums })
     : `${gqlTypeToTsString(
         { type, scalars, enums },
-        { suffix: "Result<T>", optionalAsUndefined: false }
+        { suffix: "Result<T>", optionalAsUndefined: false },
       )}${type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""}`;
 
 export const argsToTsDeclaration = (
   args: ReadonlyArray<InputValueDefinitionNode>,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
-  withProperty = true
+  withProperty = true,
 ) =>
   `${
     withProperty
@@ -166,40 +180,46 @@ export const argsToTsDeclaration = (
       (arg) =>
         `${arg.name.value}${
           isGqlTypeOptional(arg.type) ? "?" : ""
-        }: ${gqlTypeToTsName(arg.type, scalars, enums)}`
+        }: ${gqlTypeToTsName(arg.type, scalars, enums)}`,
     )
     .join(", ")} }`;
 
 const getRootType = (schema: DocumentNode, name: "Query" | "Mutation") =>
   schema.definitions.find(
     (node) =>
-      node.kind === Kind.OBJECT_TYPE_DEFINITION && node.name.value === name
+      node.kind === Kind.OBJECT_TYPE_DEFINITION && node.name.value === name,
   ) as ObjectTypeDefinitionNode | undefined;
 
-export const getQueries = (schema: DocumentNode) => getRootType(schema, "Query");
+export const getQueries = (schema: DocumentNode) =>
+  getRootType(schema, "Query");
 
 export const getMutations = (schema: DocumentNode) =>
   getRootType(schema, "Mutation");
 
 export const getEnums = (schema: DocumentNode) =>
   schema.definitions.filter(
-    (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
+    (node) => node.kind === Kind.ENUM_TYPE_DEFINITION,
   ) as Array<EnumTypeDefinitionNode>;
+
+export const getUnions = (schema: DocumentNode) =>
+  schema.definitions.filter(
+    (node) => node.kind === Kind.UNION_TYPE_DEFINITION,
+  ) as Array<UnionTypeDefinitionNode>;
 
 export const getObjectTypes = (
   schema: DocumentNode,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ) =>
   schema.definitions.filter(
     (node) =>
       node.kind === Kind.OBJECT_TYPE_DEFINITION &&
       !["Query", "Mutation"].includes(node.name.value) &&
-      !isEnum(node, enums)
+      !isEnum(node, enums),
   ) as Array<ObjectTypeDefinitionNode>;
 
 export const resolveScalars = (
   schema: DocumentNode,
-  scalarTypes: Record<string, ScalarType>
+  scalarTypes: Record<string, ScalarType>,
 ) => {
   const customScalars = getCustomScalars(schema);
 
@@ -211,10 +231,15 @@ export const resolveScalars = (
         throw `No type for scalar ${scalar.name.value}.`;
       }
       return { gql: scalar.name.value, ts: type.name || scalar.name.value };
-    })
+    }),
   );
 
-  return { customScalars, scalars, enums: getEnums(schema) };
+  return {
+    customScalars,
+    scalars,
+    enums: getEnums(schema),
+    unions: getUnions(schema),
+  };
 };
 
 // Generators
@@ -222,7 +247,7 @@ export const resolveScalars = (
 // TODO: Group imports from same file together
 export const customScalarsImports = (
   scalarTypes: Record<string, ScalarType>,
-  customScalars: Array<ScalarTypeDefinitionNode>
+  customScalars: Array<ScalarTypeDefinitionNode>,
 ) =>
   customScalars
     .map((scalar, index) => {
@@ -260,7 +285,8 @@ export const customScalarsImports = (
 export const types = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
+  unions: Array<UnionTypeDefinitionNode>,
 ) =>
   [
     "type Arguments = string | number | boolean | null | {",
@@ -277,13 +303,14 @@ export const types = (
           (node) =>
             node.kind === Kind.OBJECT_TYPE_DEFINITION &&
             // We don't expose these types
-            !["Query", "Mutation"].includes(node.name.value)
+            !["Query", "Mutation"].includes(node.name.value),
         ) as Array<ObjectTypeDefinitionNode>
       ).map(
         (node) =>
-          `  | ${node.name.value}${isEnum(node, enums) ? "" : "Query"}[number]`
-      )
+          `  | ${node.name.value}${isEnum(node, enums) ? "" : "Query"}[number]`,
+      ),
     )
+    .concat(unions.map((node) => `  | ${node.name.value}Query[number]`))
     .concat([
       ">;",
       "",
@@ -302,7 +329,7 @@ export const types = (
 const fieldQuery = (
   field: FieldDefinitionNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ): string =>
   isScalar(field.type, scalars) || isEnum(field.type, enums)
     ? `'${field.name.value}'`
@@ -310,7 +337,7 @@ const fieldQuery = (
         field.type,
         scalars,
         enums,
-        "Query"
+        "Query",
       )}${
         field.arguments && field.arguments.length > 0
           ? `, $args${
@@ -322,7 +349,7 @@ const fieldQuery = (
                 (arg) =>
                   `${arg.name.value}${
                     isGqlTypeOptional(arg.type) ? "?" : ""
-                  }: ${gqlTypeToTsName(arg.type, scalars, enums)}`
+                  }: ${gqlTypeToTsName(arg.type, scalars, enums)}`,
               )
               .join(", ")} }`
           : ""
@@ -331,14 +358,15 @@ const fieldQuery = (
 export const queriesTypes = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
+  unions: Array<UnionTypeDefinitionNode>,
 ) => {
   const queries = (
     schema.definitions.filter(
       (node) =>
         node.kind === Kind.OBJECT_TYPE_DEFINITION &&
         // We don't expose these types
-        !["Query", "Mutation"].includes(node.name.value)
+        !["Query", "Mutation"].includes(node.name.value),
     ) as Array<ObjectTypeDefinitionNode>
   )
     .map((node) =>
@@ -349,11 +377,11 @@ export const queriesTypes = (
       ]
         .concat(
           (node.fields || []).map(
-            (field) => `  | ${fieldQuery(field, scalars, enums)}`
-          )
+            (field) => `  | ${fieldQuery(field, scalars, enums)}`,
+          ),
         )
         .concat([">;"])
-        .join("\n")
+        .join("\n"),
     )
     .join("\n\n");
 
@@ -369,12 +397,12 @@ export const queriesTypes = (
                   scalars,
                   enums,
                 },
-                { optionalAsUndefined: false }
-              )}${field.type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""}`
-          )
+                { optionalAsUndefined: false },
+              )}${field.type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""}`,
+          ),
         )
         .concat(["};"])
-        .join("\n")
+        .join("\n"),
     )
     .join("\n\n");
 
@@ -388,7 +416,7 @@ export const queriesTypes = (
           (node.fields || [])
             .filter(
               (field) =>
-                !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+                !isScalar(field.type, scalars) && !isEnum(field.type, enums),
             )
             .map(
               (field) =>
@@ -408,20 +436,20 @@ export const queriesTypes = (
                     field.type.type.kind === Kind.LIST_TYPE)
                     ? ">"
                     : ""
-                } : never :`
-            )
+                } : never :`,
+            ),
         )
         .concat([
           `    P extends keyof ${node.name.value} ? ${node.name.value}[P] : never`,
           "}, '$args'>>;",
         ])
-        .join("\n")
+        .join("\n"),
     )
     .join("\n\n");
 
   const inputs = (
     schema.definitions.filter(
-      (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION
+      (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION,
     ) as Array<InputObjectTypeDefinitionNode>
   )
     .map((node) =>
@@ -433,12 +461,12 @@ export const queriesTypes = (
                 isGqlTypeOptional(field.type) ? "?" : ""
               }: ${gqlTypeToTsString(
                 { type: field.type, scalars, enums },
-                { suffix: "", optional: false }
-              )}`
-          )
+                { suffix: "", optional: false },
+              )}`,
+          ),
         )
         .concat(["};"])
-        .join("\n")
+        .join("\n"),
     )
     .join("\n\n");
 
@@ -450,12 +478,59 @@ export const queriesTypes = (
             (value, index, values) =>
               `  | '${value.name.value}'${
                 index === values.length - 1 ? ";" : ""
-              }`
-          )
+              }`,
+          ),
         )
-        .join("\n")
+        .join("\n"),
     )
     .join("\n\n");
 
-  return [queries, types, results, inputs, enumerations].join("\n\n");
+  const unionQueries = unions
+    .map(
+      (node) =>
+        `export type ${node.name.value}Query = Array<\n  | '__typename'\n  | { $on: { ${(
+          node.types || []
+        )
+          .map((member) => `${member.name.value}?: ${member.name.value}Query`)
+          .join(", ")} } }\n>;`,
+    )
+    .join("\n\n");
+
+  const unionTypes = unions
+    .map(
+      (node) =>
+        `export type ${node.name.value} = ${(node.types || [])
+          .map((member) => member.name.value)
+          .join(" | ")};`,
+    )
+    .join("\n\n");
+
+  const unionResults = unions
+    .map(
+      (node) =>
+        `type ${node.name.value}Result<T extends ${
+          node.name.value
+        }Query[number], WithTypename = '__typename' extends T ? true : false> =\n${(
+          node.types || []
+        )
+          .map(
+            (member) =>
+              `  | (T extends { $on: { ${member.name.value}: Array<infer Q extends ${member.name.value}Query[number]> } } ? Prettify<${member.name.value}Result<Q> & (WithTypename extends true ? { __typename: '${member.name.value}' } : {})> : never)`,
+          )
+          .join("\n")};`,
+    )
+    .join("\n\n");
+
+  return [
+    queries,
+    unionQueries,
+    types,
+    unionTypes,
+    results,
+    unionResults,
+    inputs,
+    enumerations,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 };

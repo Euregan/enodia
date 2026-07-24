@@ -122,7 +122,7 @@ const queriesAndMutationsParameters = (schema: DocumentNode) => {
           `      array: ${isArray(query.type)}`,
           "    },",
           "    args: null",
-        ].join("\n")}\n  },`
+        ].join("\n")}\n  },`,
     ),
     "}",
   ].join("\n");
@@ -130,14 +130,14 @@ const queriesAndMutationsParameters = (schema: DocumentNode) => {
 
 const typesFields = (
   schema: DocumentNode,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ) =>
   [
     "const types = {",
     (
       schema.definitions.filter(
         (node) =>
-          node.kind === Kind.OBJECT_TYPE_DEFINITION && !isEnum(node, enums)
+          node.kind === Kind.OBJECT_TYPE_DEFINITION && !isEnum(node, enums),
       ) as Array<ObjectTypeDefinitionNode>
     )
       .map((node) =>
@@ -145,11 +145,11 @@ const typesFields = (
           .concat(
             (node.fields || []).map(
               (field) =>
-                `    ${field.name.value}: ${gqlTypeToText(field.type)},`
-            )
+                `    ${field.name.value}: ${gqlTypeToText(field.type)},`,
+            ),
           )
           .concat(["  },"])
-          .join("\n")
+          .join("\n"),
       )
       .join("\n\n"),
     "}",
@@ -158,7 +158,7 @@ const typesFields = (
 const client = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ) => {
   return [
     "const useDimensions = (): [number, number] => {",
@@ -574,12 +574,15 @@ const client = (
 };
 
 export const schemaToCli = (schema: DocumentNode, { scalarTypes }: Options) => {
-  const { customScalars, scalars, enums } = resolveScalars(schema, scalarTypes);
+  const { customScalars, scalars, enums, unions } = resolveScalars(
+    schema,
+    scalarTypes,
+  );
 
   return [
     imports(),
-    queriesTypes(schema, scalars, enums),
-    types(schema, scalars, enums),
+    queriesTypes(schema, scalars, enums, unions),
+    types(schema, scalars, enums, unions),
     customScalarsImports(scalarTypes, customScalars),
     queriesAndMutationsParameters(schema),
     typesFields(schema, enums),

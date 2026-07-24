@@ -67,6 +67,35 @@ authentication, for example. This function will return the instantiated client.
 The client has two properties, `query` and `mutation` containing functions to
 call every query and mutation your GraphQL API exposes.
 
+#### Unions
+
+Fields returning a union are selected with a `$on` object keyed by the member
+type names. `__typename` can be selected directly and is used to discriminate
+the result:
+
+```typescript
+const feed = await client.query.feed([
+  "__typename",
+  {
+    $on: {
+      Post: ["id", "content"],
+      Comment: ["id", { author: ["name"] }],
+    },
+  },
+]);
+
+feed.forEach((item) => {
+  if (item.__typename === "Post") {
+    // item is narrowed to the Post selection here
+    console.log(item.content);
+  }
+});
+```
+
+On the server, resolvers for a union-typed field must return the matching
+member tagged with its `__typename` so the server can resolve the concrete
+type.
+
 ## Configuration
 
 ### `schema`

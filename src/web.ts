@@ -116,7 +116,7 @@ const queryFunctionParameters = (
   field: FieldDefinitionNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
-  withArgs = true
+  withArgs = true,
 ) =>
   [
     !isScalar(field.type, scalars) ? "query: Array<T>" : null,
@@ -128,7 +128,7 @@ const queryFunctionParameters = (
             (arg) =>
               `${arg.name.value}${
                 isGqlTypeOptional(arg.type) ? "?" : ""
-              }: ${gqlTypeToTsName(arg.type, scalars, enums)}`
+              }: ${gqlTypeToTsName(arg.type, scalars, enums)}`,
           )
           .join(", ")} }`
       : null,
@@ -144,7 +144,7 @@ const gqlArgTypes = (args: readonly InputValueDefinitionNode[]) =>
 const queryOrMutationFunctions = (
   queries: ObjectTypeDefinitionNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ): string =>
   (queries.fields || [])
     .map((field) =>
@@ -155,16 +155,16 @@ const queryOrMutationFunctions = (
             : `<T extends ${gqlTypeToTsName(
                 field.type,
                 scalars,
-                enums
+                enums,
               )}Query[number]>`
         }(${queryFunctionParameters(
           field,
           scalars,
-          enums
+          enums,
         )}): Promise<${queryResult(
           field.type,
           scalars,
-          enums
+          enums,
         )}> => call(graphqlServerUrl, '${field.name.value}', ${
           !isScalar(field.type, scalars) ? "query" : "null"
         }${
@@ -176,14 +176,14 @@ const queryOrMutationFunctions = (
             ? "null"
             : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
         }, "query", options).then(({ data }) => data.${field.name.value}),`,
-      ].join("\n")
+      ].join("\n"),
     )
     .join("\n");
 
 const client = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ) => {
   const queries = getQueries(schema);
   const mutations = getMutations(schema);
@@ -198,7 +198,7 @@ const client = (
               queryOrMutationFunctions(queries, scalars, enums),
               `  }${mutations ? "," : ""}`,
             ]
-          : []
+          : [],
       )
       .concat(
         mutations
@@ -207,7 +207,7 @@ const client = (
               queryOrMutationFunctions(mutations, scalars, enums),
               "  }",
             ]
-          : []
+          : [],
       )
       .concat(["});", "", "export default enodia"])
       .join("\n")
@@ -218,7 +218,7 @@ const react = (
   url: string,
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ) => {
   const queries = getQueries(schema);
   const mutations = getMutations(schema);
@@ -227,7 +227,7 @@ const react = (
     .map((field) =>
       [
         `export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
-          1
+          1,
         )}Query = ${
           !isScalar(field.type, scalars) && !isEnum(field.type, enums)
             ? `<${fieldsConstraint(field.type, scalars, enums)}>`
@@ -245,7 +245,7 @@ const react = (
         `  const [data, setData] = useState<${queryResult(
           field.type,
           scalars,
-          enums
+          enums,
         )} | undefined>(undefined);`,
         "",
         "  const fetch = useCallback(",
@@ -327,13 +327,13 @@ const react = (
         "",
         "  return [true, null, null, fetch];",
         "}",
-      ].join("\n")
+      ].join("\n"),
     )
     .concat(
       (mutations?.fields || []).map((field) =>
         [
           `export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
-            1
+            1,
           )}Mutation = ${
             !isScalar(field.type, scalars) && !isEnum(field.type, enums)
               ? `<${fieldsConstraint(field.type, scalars, enums)}>`
@@ -357,7 +357,7 @@ const react = (
           `  const [data, setData] = useState<${queryResult(
             field.type,
             scalars,
-            enums
+            enums,
           )} | undefined>(undefined);`,
           "",
           `  const mutate = useCallback(async (${
@@ -411,8 +411,8 @@ const react = (
           "",
           "  return [mutate, loading, null, null];",
           "}",
-        ].join("\n")
-      )
+        ].join("\n"),
+      ),
     )
     .join("\n\n");
 };
@@ -426,16 +426,19 @@ type Options = {
 
 const schemaToWeb = (
   schema: DocumentNode,
-  { scalarTypes, withReact }: Options
+  { scalarTypes, withReact }: Options,
 ) => {
-  const { customScalars, scalars, enums } = resolveScalars(schema, scalarTypes);
+  const { customScalars, scalars, enums, unions } = resolveScalars(
+    schema,
+    scalarTypes,
+  );
 
   return [
     imports(!!withReact),
     customScalarsImports(scalarTypes, customScalars),
-    types(schema, scalars, enums),
+    types(schema, scalars, enums, unions),
     clientTypes(schema, !!withReact),
-    queryArgsToTypes(schema, scalars, enums),
+    queryArgsToTypes(schema, scalars, enums, unions),
     fieldsToQuery(),
     resultsToArgs(),
     argsToGql(),
@@ -443,7 +446,7 @@ const schemaToWeb = (
     returnsToVariables(),
     cache(),
     call(),
-    queriesTypes(schema, scalars, enums),
+    queriesTypes(schema, scalars, enums, unions),
     client(schema, scalars, enums),
     withReact ? react(withReact.url, schema, scalars, enums) : "",
   ].join("\n\n");

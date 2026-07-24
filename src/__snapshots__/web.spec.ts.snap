@@ -43,3 +43,22 @@ exports[`args generation for queriesAndMutations 2`] = `
   "posts_comments_userId": "user-ea97-40d2-9e1c-766288fa6037",
 }
 `;
+
+exports[`union query generation 1`] = `
+"query feed {
+ feed
+ {
+  __typename
+... on Post {
+  content
+comments {
+  content
+
+}
+}
+... on Comment {
+  content
+
+}
+} }"
+`;

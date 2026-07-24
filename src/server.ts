@@ -6,6 +6,7 @@ import {
   Kind,
   ObjectTypeDefinitionNode,
   TypeNode,
+  UnionTypeDefinitionNode,
 } from "graphql";
 import { GqlScalarToTs, ScalarType } from "./types.ts";
 import {
@@ -19,6 +20,7 @@ import {
   isEnum,
   isGqlTypeOptional,
   isScalar,
+  isUnion,
   queriesTypes,
   resolveScalars,
   types,
@@ -34,10 +36,25 @@ const gqlTypeToReturnTsString = (
   type: TypeNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
-  optional = true
+  unions: Array<UnionTypeDefinitionNode>,
+  optional = true,
 ): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE:
+      if (isUnion(type, unions)) {
+        const members = (
+          unions.find((union) => union.name.value === type.name.value)!.types ||
+          []
+        )
+          .map(
+            (member) =>
+              `(${partialize(member.name.value)} & { __typename: '${
+                member.name.value
+              }' })`,
+          )
+          .join(" | ");
+        return `(${members})${optional ? " | undefined" : ""}`;
+      }
       const tsName = gqlTypeToTsName(type, scalars, enums);
       const partialized =
         !isScalar(type, scalars) && !isEnum(type, enums)
@@ -49,10 +66,11 @@ const gqlTypeToReturnTsString = (
         type.type.kind === Kind.NON_NULL_TYPE ? type.type.type : type.type,
         scalars,
         enums,
-        false
+        unions,
+        false,
       )}>${optional ? " | undefined" : ""}`;
     case Kind.NON_NULL_TYPE:
-      return gqlTypeToReturnTsString(type.type, scalars, enums, false);
+      return gqlTypeToReturnTsString(type.type, scalars, enums, unions, false);
   }
 };
 
@@ -60,7 +78,7 @@ const queryFunctionParameters = (
   field: FieldDefinitionNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
-  withArgs = true
+  withArgs = true,
 ) =>
   [
     withArgs && field.arguments && field.arguments.length > 0
@@ -71,8 +89,8 @@ const queryFunctionParameters = (
                 isGqlTypeOptional(arg.type) ? "?" : ""
               }: ${gqlTypeToTsString(
                 { type: arg.type, scalars, enums },
-                { suffix: "", optional: false }
-              )}`
+                { suffix: "", optional: false },
+              )}`,
           )
           .join(", ")} }${
           field.arguments.every((arg) => isGqlTypeOptional(arg.type))
@@ -86,7 +104,7 @@ const queryFunctionParameters = (
 
 const fieldResolversContraint = (
   schema: DocumentNode,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ) => {
   const types = getObjectTypes(schema, enums);
 
@@ -97,7 +115,7 @@ const fieldResolversContraint = (
 
 const fieldResolversGenericSpread = (
   schema: DocumentNode,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ) => {
   const types = getObjectTypes(schema, enums);
 
@@ -107,7 +125,7 @@ const fieldResolversGenericSpread = (
 const fieldTypeToSchemaType = (
   type: TypeNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
 ): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE:
@@ -132,13 +150,13 @@ const fieldTypeToSchemaType = (
       return `new GraphQLList(${fieldTypeToSchemaType(
         type.type,
         scalars,
-        enums
+        enums,
       )})`;
     case Kind.NON_NULL_TYPE:
       return `new GraphQLNonNull(${fieldTypeToSchemaType(
         type.type,
         scalars,
-        enums
+        enums,
       )})`;
   }
 };
@@ -157,6 +175,7 @@ const imports = () =>
       "GraphQLList",
       "GraphQLID",
       "GraphQLScalarType",
+      "GraphQLUnionType",
       "GraphQLEnumType",
       "GraphQLString",
       "GraphQLInt",
@@ -183,7 +202,8 @@ const serverTypes = () =>
 const fieldsResolversType = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
+  unions: Array<UnionTypeDefinitionNode>,
 ) => {
   const types = getObjectTypes(schema, enums);
 
@@ -197,9 +217,10 @@ const fieldsResolversType = (
             `Key extends "${field.name.value}" ? ${gqlTypeToReturnTsString(
               field.type,
               scalars,
-              enums
-            )} : `
-        )
+              enums,
+              unions,
+            )} : `,
+        ),
       )
       .concat([" never", ")"])
       .join("");
@@ -210,11 +231,11 @@ const fieldsResolversType = (
         `    ${node.name.value}: {`,
         `        [Key in ${node.name.value}Keys]:`,
         `            (${node.name.value}: ${partialize(
-          node.name.value
+          node.name.value,
         )}, context: Context) =>`,
         `            ${toReturn(extenders(node))}`,
         "    };",
-      ].join("\n")
+      ].join("\n"),
     )
     .join("\n");
 
@@ -229,7 +250,8 @@ const fieldsResolversType = (
 const queriesAndMutationsResolversType = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
+  unions: Array<UnionTypeDefinitionNode>,
 ) => {
   const partialResolverConstraints = fieldResolversContraint(schema, enums);
 
@@ -243,13 +265,13 @@ const queriesAndMutationsResolversType = (
                 `        ${field.name.value}: (${queryFunctionParameters(
                   field,
                   scalars,
-                  enums
+                  enums,
                 )}${
                   field.arguments && field.arguments.length > 0 ? ", " : ""
                 }context: Context) => ${toReturn(
-                  gqlTypeToReturnTsString(field.type, scalars, enums)
-                )}`
-            )
+                  gqlTypeToReturnTsString(field.type, scalars, enums, unions),
+                )}`,
+            ),
           )
           .concat(["    }"])
       : [];
@@ -263,16 +285,17 @@ const queriesAndMutationsResolversType = (
               const returnType = gqlTypeToReturnTsString(
                 field.type,
                 scalars,
-                enums
+                enums,
+                unions,
               );
               return `        ${field.name.value}: (${queryFunctionParameters(
                 field,
                 scalars,
-                enums
+                enums,
               )}${
                 field.arguments && field.arguments.length > 0 ? ", " : ""
               }context: Context) => DetailedResponse<${returnType}> | ${returnType} | Promise<DetailedResponse<${returnType}> | ${returnType}>`;
-            })
+            }),
           )
           .concat(["    }"])
       : [];
@@ -289,12 +312,13 @@ const queriesAndMutationsResolversType = (
 const typesFromConfiguration = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
+  unions: Array<UnionTypeDefinitionNode>,
 ) => {
   const types = getObjectTypes(schema, enums);
 
   const inputs = schema.definitions.filter(
-    (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION
+    (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION,
   ) as Array<InputObjectTypeDefinitionNode>;
 
   const scalarTypes = scalars
@@ -303,7 +327,7 @@ const typesFromConfiguration = (
       (scalar) =>
         `const ${
           scalar.gql
-        } = ${`new GraphQLScalarType({ name: "${scalar.gql}" })`}`
+        } = ${`new GraphQLScalarType({ name: "${scalar.gql}" })`}`,
     );
 
   const enumTypes = enums.map(
@@ -312,7 +336,7 @@ const typesFromConfiguration = (
         en.name.value
       }", values: {${(en.values || [])
         .map((value) => `${value.name.value}: {}`)
-        .join(", ")}} })`
+        .join(", ")}} })`,
   );
 
   return scalarTypes
@@ -329,7 +353,7 @@ const typesFromConfiguration = (
           `            type: ${fieldTypeToSchemaType(
             field.type,
             scalars,
-            enums
+            enums,
           )},`,
           // TODO: Add the proper source type to the cast
           `            resolve: "${field.name.value}" in fieldsConfiguration.${type.name.value} ? (source, args, context, info) => (fieldsConfiguration.${type.name.value} as { ${field.name.value}: (source: any, context: { userContext: Context }) => unknown }).${field.name.value}(source, context.userContext) : undefined`,
@@ -337,7 +361,19 @@ const typesFromConfiguration = (
         ]),
         "    })",
         "})",
-      ])
+      ]),
+    )
+    .concat("")
+    .concat(
+      unions.flatMap((union) => [
+        `const ${union.name.value}: GraphQLUnionType = new GraphQLUnionType({`,
+        `    name: "${union.name.value}",`,
+        `    types: [${(union.types || [])
+          .map((member) => member.name.value)
+          .join(", ")}],`,
+        `    resolveType: (value) => (value as { __typename: string }).__typename,`,
+        "})",
+      ]),
     )
     .concat("")
     .concat(
@@ -350,20 +386,21 @@ const typesFromConfiguration = (
           `            type: ${fieldTypeToSchemaType(
             field.type,
             scalars,
-            enums
+            enums,
           )},`,
           "        },",
         ]),
         "    })",
         "})",
-      ])
+      ]),
     );
 };
 
 const schemaFromConfiguration = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
+  unions: Array<UnionTypeDefinitionNode>,
 ) => {
   const types = getObjectTypes(schema, enums);
 
@@ -376,14 +413,14 @@ const schemaFromConfiguration = (
           `                type: ${fieldTypeToSchemaType(
             field.type,
             scalars,
-            enums
+            enums,
           )},`,
           "                args: {",
           ...(field.arguments || []).map(
             (arg) =>
               `                    ${
                 arg.name.value
-              }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`
+              }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`,
           ),
           "                },",
           `                resolve: (source, args, context, info) => Query.${
@@ -416,14 +453,14 @@ const schemaFromConfiguration = (
           `                type: ${fieldTypeToSchemaType(
             field.type,
             scalars,
-            enums
+            enums,
           )},`,
           "                args: {",
           ...(field.arguments || []).map(
             (arg) =>
               `                    ${
                 arg.name.value
-              }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`
+              }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`,
           ),
           "                },",
           "                resolve: async (source, args, context, info) => {",
@@ -465,12 +502,13 @@ const schemaFromConfiguration = (
     ...[
       `        ${scalars
         .filter(
-          (scalar) => !baseScalars.some((base) => base.gql === scalar.gql)
+          (scalar) => !baseScalars.some((base) => base.gql === scalar.gql),
         )
         .map((scalar) => scalar.gql)
         .join(", ")}`,
       `        ${enums.map((en) => en.name.value).join(", ")}`,
       `        ${types.map((type) => type.name.value).join(", ")}`,
+      `        ${unions.map((union) => union.name.value).join(", ")}`,
     ]
       // We remove empty lines
       .filter((line) => line.trim())
@@ -483,7 +521,8 @@ const schemaFromConfiguration = (
 const server = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
-  enums: Array<EnumTypeDefinitionNode>
+  enums: Array<EnumTypeDefinitionNode>,
+  unions: Array<UnionTypeDefinitionNode>,
 ) => {
   const partialResolverConstraints = fieldResolversContraint(schema, enums);
   const resolversGenerics = fieldResolversGenericSpread(schema, enums);
@@ -501,13 +540,13 @@ const server = (
     `    ({ Query${
       mutations ? ", Mutation" : ""
     } }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
-    ...typesFromConfiguration(schema, scalars, enums).map(
-      (line) => `    ${line}`
+    ...typesFromConfiguration(schema, scalars, enums, unions).map(
+      (line) => `    ${line}`,
     ),
     "    Object.entries(fieldsConfiguration)",
     "",
-    ...schemaFromConfiguration(schema, scalars, enums).map(
-      (line) => `    ${line}`
+    ...schemaFromConfiguration(schema, scalars, enums, unions).map(
+      (line) => `    ${line}`,
     ),
     "",
     "    return schema",
@@ -559,17 +598,20 @@ type Options = {
 };
 
 const schemaToServer = (schema: DocumentNode, { scalarTypes }: Options) => {
-  const { customScalars, scalars, enums } = resolveScalars(schema, scalarTypes);
+  const { customScalars, scalars, enums, unions } = resolveScalars(
+    schema,
+    scalarTypes,
+  );
 
   return [
     imports(),
     customScalarsImports(scalarTypes, customScalars),
-    types(schema, scalars, enums),
+    types(schema, scalars, enums, unions),
     serverTypes(),
-    queriesTypes(schema, scalars, enums),
-    fieldsResolversType(schema, scalars, enums),
-    queriesAndMutationsResolversType(schema, scalars, enums),
-    server(schema, scalars, enums),
+    queriesTypes(schema, scalars, enums, unions),
+    fieldsResolversType(schema, scalars, enums, unions),
+    queriesAndMutationsResolversType(schema, scalars, enums, unions),
+    server(schema, scalars, enums, unions),
   ].join("\n\n");
 };
 
