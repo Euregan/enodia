@@ -3,51 +3,14 @@
 import { access, readFile, writeFile } from "node:fs/promises";
 import path, { resolve } from "node:path";
 import { parse, print } from "graphql";
-import z from "zod";
 import schemaToWeb from "./web.ts";
 import fetcher from "./fetcher.ts";
 import schemaToServer from "./server.ts";
 import prompts from "prompts";
 import { getCustomScalars } from "./generator/helpers.ts";
-import { getSchema, schemaConfigSchema } from "./schema.ts";
+import { getSchema } from "./schema.ts";
+import { configSchema } from "./config.ts";
 import { schemaToCli } from "./cli.ts";
-
-const configSchema = z.object({
-  schema: schemaConfigSchema,
-  client: z
-    .object({
-      path: z.string(),
-      react: z
-        .object({
-          url: z.string(),
-        })
-        .optional(),
-    })
-    .optional(),
-  server: z
-    .object({
-      path: z.string(),
-    })
-    .optional(),
-  cli: z
-    .object({
-      path: z.string(),
-    })
-    .optional(),
-  scalars: z
-    .record(
-      z.union([
-        z.object({
-          path: z.string(),
-          name: z.string().optional(),
-        }),
-        z.object({
-          name: z.string(),
-        }),
-      ])
-    )
-    .optional(),
-});
 
 const configPath = path.resolve("./enodia.config.ts");
 
@@ -72,7 +35,7 @@ if (!configExists) {
 
   if (!initialize) {
     console.error(
-      "Enodia cannot run without a configuration file. Either re-run the CLI and follow the steps to initialize it, or create it manually."
+      "Enodia cannot run without a configuration file. Either re-run the CLI and follow the steps to initialize it, or create it manually.",
     );
     process.exit(1);
   }
@@ -86,7 +49,7 @@ if (!configExists) {
     onRender(kleur) {
       // @ts-expect-error The type is wrong :(
       this.msg = kleur.reset(
-        "Where is you GraphQL schema located? It can be a path to the .graphql file, or a URL to the running server."
+        "Where is you GraphQL schema located? It can be a path to the .graphql file, or a URL to the running server.",
       );
     },
     validate: (location) =>
@@ -114,11 +77,11 @@ if (!configExists) {
         // @ts-expect-error The type is wrong :(
         this.msg =
           kleur.reset(
-            "Please specify a Typescript type that should correspond to the "
+            "Please specify a Typescript type that should correspond to the ",
           ) +
           kleur.bold(scalar.name.value) +
           kleur.reset(
-            " scalar. It can be any Typescript type, including any, unknown, etc."
+            " scalar. It can be any Typescript type, including any, unknown, etc.",
           );
       },
       // TODO: Handle user defined types with their import
@@ -151,7 +114,9 @@ if (!configExists) {
   await writeFile(
     configPath,
     [
-      "const config = {",
+      'import { defineConfig } from "enodia";',
+      "",
+      "export default defineConfig({",
       `  schema: "${schemaLocation}",`,
       ...(client ? [`  client: { path: "${client}" },`] : []),
       ...(server ? [`  server: { path: "${server}" },`] : []),
@@ -160,14 +125,13 @@ if (!configExists) {
             .concat(
               scalarTypes.map(
                 ([graphql, typescript]) =>
-                  `    ${graphql}: { name: "${typescript}" },`
-              )
+                  `    ${graphql}: { name: "${typescript}" },`,
+              ),
             )
             .concat(["  },"])
         : []),
-      "};",
-      "export default config;",
-    ].join("\n")
+      "});",
+    ].join("\n"),
   );
 }
 
@@ -206,7 +170,7 @@ if (config.client) {
     schemaToWeb(schema, {
       scalarTypes: config.scalars || {},
       withReact: config.client.react,
-    })
+    }),
   );
   console.log("✓ Wrote client at", resolve(config.client.path));
 }
@@ -217,7 +181,7 @@ if (config.server) {
     config.server.path,
     schemaToServer(schema, {
       scalarTypes: config.scalars || {},
-    })
+    }),
   );
   console.log("✓ Wrote server at", resolve(config.server.path));
 }
@@ -228,7 +192,7 @@ if (config.cli) {
     config.cli.path,
     schemaToCli(schema, {
       scalarTypes: config.scalars || {},
-    })
+    }),
   );
   console.log("✓ Wrote cli at", resolve(config.cli.path));
 }

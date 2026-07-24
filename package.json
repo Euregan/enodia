@@ -4,6 +4,9 @@
   "type": "module",
   "repository": "https://github.com/euregan/enodia",
   "homepage": "https://github.com/euregan/enodia",
+  "exports": {
+    ".": "./src/config.ts"
+  },
   "bin": {
     "enodia": "./src/index.ts"
   },
