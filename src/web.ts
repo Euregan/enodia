@@ -1,5 +1,4 @@
 import {
-  Kind,
   DocumentNode,
   ObjectTypeDefinitionNode,
   FieldDefinitionNode,
@@ -9,10 +8,8 @@ import {
 import { GqlScalarToTs, ScalarType } from "./types.ts";
 import {
   argsToTsDeclaration,
-  baseScalars,
   customScalarsImports,
   fieldsConstraint,
-  getCustomScalars,
   getMutations,
   getQueries,
   gqlTypeToGqlString,
@@ -22,6 +19,7 @@ import {
   isScalar,
   queriesTypes,
   queryResult,
+  resolveScalars,
   types,
 } from "./generator/helpers.ts";
 import {
@@ -46,38 +44,32 @@ const cache = () =>
   [
     "const cache: Record<string, any> = {};",
     "",
+    "const cacheKey = (",
+    "  query: string,",
+    "  returns: Fields,",
+    "  args: Record<string, Arguments> | undefined",
+    ") => `${JSON.stringify(query)}|${JSON.stringify(returns)}|${JSON.stringify(args)}`;",
+    "",
     "const setCache = (",
     "  query: string,",
     "  returns: Fields,",
     "  args: Record<string, Arguments> | undefined,",
     "  data: any",
     ") => {",
-    "  cache[",
-    "    `${JSON.stringify(query)}|${JSON.stringify(returns)}|${JSON.stringify(",
-    "      args",
-    "    )}`",
-    "  ] = data;",
+    "  cache[cacheKey(query, returns, args)] = data;",
     "};",
     "",
     "const hasCache = (",
     "  query: string,",
     "  returns: Fields,",
     "  args: Record<string, Arguments> | undefined",
-    ") =>",
-    "  `${JSON.stringify(query)}|${JSON.stringify(returns)}|${JSON.stringify(",
-    "    args",
-    "  )}` in cache;",
+    ") => cacheKey(query, returns, args) in cache;",
     "",
     "const getCache = (",
     "  query: string,",
     "  returns: Fields,",
     "  args: Record<string, Arguments> | undefined",
-    ") =>",
-    "  cache[",
-    "    `${JSON.stringify(query)}|${JSON.stringify(returns)}|${JSON.stringify(",
-    "      args",
-    "    )}`",
-    "  ];",
+    ") => cache[cacheKey(query, returns, args)];",
   ].join("\n");
 
 const call = () =>
@@ -436,27 +428,7 @@ const schemaToWeb = (
   schema: DocumentNode,
   { scalarTypes, withReact }: Options
 ) => {
-  const customScalars = getCustomScalars(schema);
-
-  const scalars: Array<GqlScalarToTs> = baseScalars.concat(
-    customScalars.map((scalar) => {
-      const type = scalarTypes[scalar.name.value];
-
-      if (!type) {
-        // TODO: Write a nicer, more detailed error, with steps to solve
-        throw `No type for scalar ${scalar.name.value}.`;
-      }
-
-      return {
-        gql: scalar.name.value,
-        ts: type.name || scalar.name.value,
-      };
-    })
-  );
-
-  const enums = schema.definitions.filter(
-    (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
-  ) as Array<EnumTypeDefinitionNode>;
+  const { customScalars, scalars, enums } = resolveScalars(schema, scalarTypes);
 
   return [
     imports(!!withReact),

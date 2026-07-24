@@ -11,8 +11,8 @@ import { GqlScalarToTs, ScalarType } from "./types.ts";
 import {
   baseScalars,
   customScalarsImports,
-  getCustomScalars,
   getMutations,
+  getObjectTypes,
   getQueries,
   gqlTypeToTsName,
   gqlTypeToTsString,
@@ -20,6 +20,7 @@ import {
   isGqlTypeOptional,
   isScalar,
   queriesTypes,
+  resolveScalars,
   types,
 } from "./generator/helpers.ts";
 
@@ -87,13 +88,7 @@ const fieldResolversContraint = (
   schema: DocumentNode,
   enums: Array<EnumTypeDefinitionNode>
 ) => {
-  const types = schema.definitions.filter(
-    (node) =>
-      node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-      // These types are not concerned by resolver contraints
-      !["Query", "Mutation"].includes(node.name.value) &&
-      !isEnum(node, enums)
-  ) as Array<ObjectTypeDefinitionNode>;
+  const types = getObjectTypes(schema, enums);
 
   return types
     .map((node) => `${node.name.value}Keys extends keyof ${node.name.value}`)
@@ -104,13 +99,7 @@ const fieldResolversGenericSpread = (
   schema: DocumentNode,
   enums: Array<EnumTypeDefinitionNode>
 ) => {
-  const types = schema.definitions.filter(
-    (node) =>
-      node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-      // These types are not concerned by resolver contraints
-      !["Query", "Mutation"].includes(node.name.value) &&
-      !isEnum(node, enums)
-  ) as Array<ObjectTypeDefinitionNode>;
+  const types = getObjectTypes(schema, enums);
 
   return types.map((node) => `${node.name.value}Keys`).join(", ");
 };
@@ -135,10 +124,6 @@ const fieldTypeToSchemaType = (
           case "Boolean":
             return "GraphQLBoolean";
         }
-        return type.name.value;
-      }
-
-      if (isEnum(type, enums)) {
         return type.name.value;
       }
 
@@ -200,13 +185,7 @@ const fieldsResolversType = (
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>
 ) => {
-  const types = schema.definitions.filter(
-    (node) =>
-      node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-      // These types are not concerned by resolver contraints
-      !["Query", "Mutation"].includes(node.name.value) &&
-      !isEnum(node, enums)
-  ) as Array<ObjectTypeDefinitionNode>;
+  const types = getObjectTypes(schema, enums);
 
   const partialResolverConstraints = fieldResolversContraint(schema, enums);
 
@@ -312,13 +291,7 @@ const typesFromConfiguration = (
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>
 ) => {
-  const types = schema.definitions.filter(
-    (node) =>
-      node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-      // These types are not concerned by resolver contraints
-      !["Query", "Mutation"].includes(node.name.value) &&
-      !isEnum(node, enums)
-  ) as Array<ObjectTypeDefinitionNode>;
+  const types = getObjectTypes(schema, enums);
 
   const inputs = schema.definitions.filter(
     (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION
@@ -392,13 +365,7 @@ const schemaFromConfiguration = (
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>
 ) => {
-  const types = schema.definitions.filter(
-    (node) =>
-      node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-      // These types are not concerned by resolver contraints
-      !["Query", "Mutation"].includes(node.name.value) &&
-      !isEnum(node, enums)
-  ) as Array<ObjectTypeDefinitionNode>;
+  const types = getObjectTypes(schema, enums);
 
   const queries = getQueries(schema);
 
@@ -592,25 +559,7 @@ type Options = {
 };
 
 const schemaToServer = (schema: DocumentNode, { scalarTypes }: Options) => {
-  const customScalars = getCustomScalars(schema);
-
-  const scalars: Array<GqlScalarToTs> = baseScalars.concat(
-    customScalars.map((scalar) => {
-      const type = scalarTypes[scalar.name.value];
-      if (!type) {
-        // TODO: Write a nicer, more detailed error, with steps to solve
-        throw `No type for scalar ${scalar.name.value}.`;
-      }
-      return {
-        gql: scalar.name.value,
-        ts: type.name || scalar.name.value,
-      };
-    })
-  );
-
-  const enums = schema.definitions.filter(
-    (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
-  ) as Array<EnumTypeDefinitionNode>;
+  const { customScalars, scalars, enums } = resolveScalars(schema, scalarTypes);
 
   return [
     imports(),

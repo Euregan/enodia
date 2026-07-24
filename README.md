@@ -76,7 +76,7 @@ can either point to a GraphQL file:
 
 ```typescript
 export default {
-  input: "./path/to/schema.graphql",
+  schema: "./path/to/schema.graphql",
 };
 ```
 
@@ -84,7 +84,7 @@ Or provide the URL of your GraphQL API:
 
 ```typescript
 export default {
-  input: "http://localhost:3000/graphql",
+  schema: "http://localhost:3000/graphql",
 };
 ```
 

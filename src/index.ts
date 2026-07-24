@@ -68,7 +68,6 @@ if (!configExists) {
         kleur.bold(configPath) +
         kleur.reset(", do you want to initialize it?");
     },
-    validate: (value) => (value < 18 ? `Nightclub is 18+ only` : true),
   });
 
   if (!initialize) {
@@ -153,24 +152,22 @@ if (!configExists) {
     configPath,
     [
       "const config = {",
-      `  input: "${schemaLocation}",`,
-      `  client: "${client}",`,
-      `  server: "${server}",`,
+      `  schema: "${schemaLocation}",`,
+      ...(client ? [`  client: { path: "${client}" },`] : []),
+      ...(server ? [`  server: { path: "${server}" },`] : []),
       ...(scalarTypes.length > 0
-        ? [`  scalarTypes: {`]
+        ? [`  scalars: {`]
             .concat(
               scalarTypes.map(
                 ([graphql, typescript]) =>
                   `    ${graphql}: { name: "${typescript}" },`
               )
             )
-            .concat(["  }"])
-        : [""]),
+            .concat(["  },"])
+        : []),
       "};",
       "export default config;",
-    ]
-      .filter((line) => line.trim())
-      .join("\n")
+    ].join("\n")
   );
 }
 

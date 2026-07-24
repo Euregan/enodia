@@ -170,18 +170,52 @@ export const argsToTsDeclaration = (
     )
     .join(", ")} }`;
 
-export const getQueries = (schema: DocumentNode) =>
+const getRootType = (schema: DocumentNode, name: "Query" | "Mutation") =>
   schema.definitions.find(
     (node) =>
-      node.kind === Kind.OBJECT_TYPE_DEFINITION && node.name.value === "Query"
+      node.kind === Kind.OBJECT_TYPE_DEFINITION && node.name.value === name
   ) as ObjectTypeDefinitionNode | undefined;
 
+export const getQueries = (schema: DocumentNode) => getRootType(schema, "Query");
+
 export const getMutations = (schema: DocumentNode) =>
-  schema.definitions.find(
+  getRootType(schema, "Mutation");
+
+export const getEnums = (schema: DocumentNode) =>
+  schema.definitions.filter(
+    (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
+  ) as Array<EnumTypeDefinitionNode>;
+
+export const getObjectTypes = (
+  schema: DocumentNode,
+  enums: Array<EnumTypeDefinitionNode>
+) =>
+  schema.definitions.filter(
     (node) =>
       node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-      node.name.value === "Mutation"
-  ) as ObjectTypeDefinitionNode | undefined;
+      !["Query", "Mutation"].includes(node.name.value) &&
+      !isEnum(node, enums)
+  ) as Array<ObjectTypeDefinitionNode>;
+
+export const resolveScalars = (
+  schema: DocumentNode,
+  scalarTypes: Record<string, ScalarType>
+) => {
+  const customScalars = getCustomScalars(schema);
+
+  const scalars: Array<GqlScalarToTs> = baseScalars.concat(
+    customScalars.map((scalar) => {
+      const type = scalarTypes[scalar.name.value];
+      if (!type) {
+        // TODO: Write a nicer, more detailed error, with steps to solve
+        throw `No type for scalar ${scalar.name.value}.`;
+      }
+      return { gql: scalar.name.value, ts: type.name || scalar.name.value };
+    })
+  );
+
+  return { customScalars, scalars, enums: getEnums(schema) };
+};
 
 // Generators
 
@@ -323,15 +357,7 @@ export const queriesTypes = (
     )
     .join("\n\n");
 
-  const types = (
-    schema.definitions.filter(
-      (node) =>
-        node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-        // We don't expose these types
-        !["Query", "Mutation"].includes(node.name.value) &&
-        !isEnum(node, enums)
-    ) as Array<ObjectTypeDefinitionNode>
-  )
+  const types = getObjectTypes(schema, enums)
     .map((node) =>
       [`type ${node.name.value} = {`]
         .concat(
@@ -352,15 +378,7 @@ export const queriesTypes = (
     )
     .join("\n\n");
 
-  const results = (
-    schema.definitions.filter(
-      (node) =>
-        node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-        // We don't expose these types
-        !["Query", "Mutation"].includes(node.name.value) &&
-        !isEnum(node, enums)
-    ) as Array<ObjectTypeDefinitionNode>
-  )
+  const results = getObjectTypes(schema, enums)
     .map((node) =>
       [
         `type ${node.name.value}Result<T extends ${node.name.value}Query[number]> = Prettify<Omit<{`,
@@ -424,11 +442,7 @@ export const queriesTypes = (
     )
     .join("\n\n");
 
-  const enumerations = (
-    schema.definitions.filter(
-      (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
-    ) as Array<EnumTypeDefinitionNode>
-  )
+  const enumerations = getEnums(schema)
     .map((node) =>
       [`export type ${node.name.value} = `]
         .concat(

@@ -8,12 +8,11 @@ import {
 } from "graphql";
 import { GqlScalarToTs, ScalarType } from "./types.ts";
 import {
-  baseScalars,
   customScalarsImports,
-  getCustomScalars,
   getQueries,
   isEnum,
   queriesTypes,
+  resolveScalars,
   types,
 } from "./generator/helpers.ts";
 import {
@@ -422,7 +421,7 @@ const client = (
     "",
     "  return [",
     "    (",
-    "      <Box key={Math.random()}>",
+    "      <Box key={`${indentation}-${leaf.node.key}`}>",
     '        <Text>{"".padStart(indentation)}</Text>',
     "        <SelectableTreeNode",
     "          checked={leaf.selected}",
@@ -575,27 +574,7 @@ const client = (
 };
 
 export const schemaToCli = (schema: DocumentNode, { scalarTypes }: Options) => {
-  const customScalars = getCustomScalars(schema);
-
-  const scalars: Array<GqlScalarToTs> = baseScalars.concat(
-    customScalars.map((scalar) => {
-      const type = scalarTypes[scalar.name.value];
-
-      if (!type) {
-        // TODO: Write a nicer, more detailed error, with steps to solve
-        throw `No type for scalar ${scalar.name.value}.`;
-      }
-
-      return {
-        gql: scalar.name.value,
-        ts: type.name || scalar.name.value,
-      };
-    })
-  );
-
-  const enums = schema.definitions.filter(
-    (node) => node.kind === Kind.ENUM_TYPE_DEFINITION
-  ) as Array<EnumTypeDefinitionNode>;
+  const { customScalars, scalars, enums } = resolveScalars(schema, scalarTypes);
 
   return [
     imports(),
