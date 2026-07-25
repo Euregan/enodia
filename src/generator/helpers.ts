@@ -10,7 +10,7 @@ import {
   TypeNode,
   UnionTypeDefinitionNode,
 } from "graphql";
-import { GqlScalarToTs, ScalarType } from "../types.ts";
+import { GqlScalarToTs, ScalarTypeInfo } from "../types.ts";
 
 // Helpers
 
@@ -219,7 +219,7 @@ export const getObjectTypes = (
 
 export const resolveScalars = (
   schema: DocumentNode,
-  scalarTypes: Record<string, ScalarType>,
+  scalarTypes: Record<string, ScalarTypeInfo>,
 ) => {
   const customScalars = getCustomScalars(schema);
 
@@ -230,7 +230,7 @@ export const resolveScalars = (
         // TODO: Write a nicer, more detailed error, with steps to solve
         throw `No type for scalar ${scalar.name.value}.`;
       }
-      return { gql: scalar.name.value, ts: type.name || scalar.name.value };
+      return { gql: scalar.name.value, ts: type.type };
     }),
   );
 
@@ -241,46 +241,6 @@ export const resolveScalars = (
     unions: getUnions(schema),
   };
 };
-
-// Generators
-
-// TODO: Group imports from same file together
-export const customScalarsImports = (
-  scalarTypes: Record<string, ScalarType>,
-  customScalars: Array<ScalarTypeDefinitionNode>,
-) =>
-  customScalars
-    .map((scalar, index) => {
-      const type = scalarTypes[scalar.name.value];
-      if (!type) {
-        // TODO: Write a nicer, more detailed error, with steps to solve
-        throw `No type for scalar ${scalar.name.value}.`;
-      }
-
-      // We make sure not to import twice the same type
-      if (
-        customScalars.some((s, i) => {
-          const t = scalarTypes[s.name.value];
-          return (
-            "path" in t &&
-            "path" in type &&
-            t.path === type.path &&
-            t.name === type.name &&
-            i < index
-          );
-        })
-      ) {
-        return null;
-      }
-
-      return "path" in type
-        ? `import type ${type.name ? "" : scalar.name.value}${
-            type.name ? `{ ${type.name} }` : ""
-          } from '${type.path}'`
-        : null;
-    })
-    .filter(Boolean)
-    .join("\n");
 
 export const types = (
   schema: DocumentNode,

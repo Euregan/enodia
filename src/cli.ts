@@ -6,9 +6,8 @@ import {
   ObjectTypeDefinitionNode,
   TypeNode,
 } from "graphql";
-import { GqlScalarToTs, ScalarType } from "./types.ts";
+import { GqlScalarToTs, ScalarTypeInfo } from "./types.ts";
 import {
-  customScalarsImports,
   getQueries,
   isEnum,
   queriesTypes,
@@ -24,7 +23,8 @@ import {
 } from "./generator/client.ts";
 
 type Options = {
-  scalarTypes: Record<string, ScalarType>;
+  scalarTypes: Record<string, ScalarTypeInfo>;
+  scalarImports: string;
 };
 
 const imports = () =>
@@ -573,17 +573,17 @@ const client = (
   ].join("\n");
 };
 
-export const schemaToCli = (schema: DocumentNode, { scalarTypes }: Options) => {
-  const { customScalars, scalars, enums, unions } = resolveScalars(
-    schema,
-    scalarTypes,
-  );
+export const schemaToCli = (
+  schema: DocumentNode,
+  { scalarTypes, scalarImports }: Options,
+) => {
+  const { scalars, enums, unions } = resolveScalars(schema, scalarTypes);
 
   return [
     imports(),
     queriesTypes(schema, scalars, enums, unions),
     types(schema, scalars, enums, unions),
-    customScalarsImports(scalarTypes, customScalars),
+    scalarImports,
     queriesAndMutationsParameters(schema),
     typesFields(schema, enums),
     fieldsToQuery(),

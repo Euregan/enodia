@@ -18,29 +18,31 @@ npm install -D enodia
 ```
 
 Finally, you will need to setup an `enodia.config.ts` file at the root of your
-project. This file should export an object with the following properties:
+project. Wrap your configuration with `defineConfig` to get autocompletion and
+type checking:
 
 ```typescript
-export default {
+import { defineConfig, scalar } from "enodia";
+
+export default defineConfig({
   // This is either the path to your graphql schema, or the URL where your API runs
   schema: "./src/graphql.schema",
   // If you only want to generate the server side, you can omit this
   client: {
     // This is the path where you want the client to be generated
-    path: "./src/web/enodia.ts"
+    path: "./src/web/enodia.ts",
   },
   server: {
     // This is the path where you want the server to be generated
-    path: "./src/server/enodia.ts"
-  }
+    path: "./src/server/enodia.ts",
+  },
   // If you use custom scalars, you have to define them here
   scalars: {
-    // This is a map of custom scalar types in your GraphQL schema to Typescript types.
-    // For example, if your GraphQL schema has a `Date` scalar type, you can map
-    // it to the `Date` type in Typescript.
-    Date: { name: "Date" },
+    // Map each custom scalar in your GraphQL schema to a Typescript type with
+    // `scalar<YourType>()`. For example, a `Date` scalar mapped to `Date`:
+    Date: scalar<Date>(),
   },
-};
+});
 ```
 
 More information on this file in the [configuration section](#configuration).
@@ -104,17 +106,17 @@ Enodia needs a GraphQL schema definition to generate the client and server. You
 can either point to a GraphQL file:
 
 ```typescript
-export default {
+export default defineConfig({
   schema: "./path/to/schema.graphql",
-};
+});
 ```
 
 Or provide the URL of your GraphQL API:
 
 ```typescript
-export default {
+export default defineConfig({
   schema: "http://localhost:3000/graphql",
-};
+});
 ```
 
 Note that your API will need to be running for Enodia to generate the files.
@@ -126,11 +128,11 @@ Note that your API will need to be running for Enodia to generate the files.
 If you want to generate the client, you will need to provide its path:
 
 ```typescript
-export default {
+export default defineConfig({
   client: {
     path: "./path/to/client.ts",
   },
-};
+});
 ```
 
 #### `react`
@@ -139,13 +141,13 @@ Enodia can also generate React hooks for each query and mutations. All you need
 for it is to specify the API URL to call:
 
 ```typescript
-export default {
+export default defineConfig({
   client: {
     react: {
       url: "http://localhost:3000/graphql",
     },
   },
-};
+});
 ```
 
 As the config file is written in Typescript, you can rely on environment
@@ -154,40 +156,60 @@ need to rely on the `dotenv` library.
 
 ```typescript
 import "dotenv/config";
+import { defineConfig } from "enodia";
 
-export default {
+export default defineConfig({
   client: {
     react: {
       url: process.env.GRAPHQL_API_ENDPOINT,
     },
   },
-};
+});
 ```
 
 ### `scalars`
 
-This is a map of scalar types in your GraphQL schema to Typescript types. For
-example, if your GraphQL schema has a `Date` scalar type, you can map it to the
-`Date` type in Typescript.
+This is a map of custom scalar types in your GraphQL schema to Typescript types.
+Each scalar is declared with `scalar<YourType>()`, so Enodia has you specify the
+actual type rather than defaulting to `any`. For example, mapping a `Date` scalar
+to the built-in `Date` type:
 
 ```typescript
-export default {
+import { defineConfig, scalar } from "enodia";
+
+export default defineConfig({
   scalars: {
-    Date: { name: "Date" },
+    Date: scalar<Date>(),
   },
-};
+});
 ```
 
-If you need to use custom types, you can also provide a `path` property, which
-will be used to import the type from the generated client file.
+Any type works, including inline object types:
 
 ```typescript
-export default {
-  scalars: {
-    Json: { name: "Json", path: "./types" },
-  },
-};
+scalars: {
+  Point: scalar<{ x: number; y: number }>(),
+},
 ```
 
-The `name` property is optional when providing a `path`, if the returned type is
-the default export of the module.
+If the type comes from an import, just import it in your config as usual and use
+it. Enodia reads the imports your scalar types rely on and replicates them in
+every generated file, rewriting relative paths so they resolve from the
+generated file's location:
+
+```typescript
+import { defineConfig, scalar } from "enodia";
+import { DateTime } from "luxon";
+import type { Json } from "./types";
+
+export default defineConfig({
+  scalars: {
+    DateTime: scalar<DateTime>(),
+    Json: scalar<Json>(),
+  },
+});
+```
+
+Because the imports are replicated instead of copied, the generated files always
+reference the original type. Updating it in its source module is enough, and the
+generated copy never goes stale.

@@ -10,6 +10,10 @@ import prompts from "prompts";
 import { getCustomScalars } from "./generator/helpers.ts";
 import { getSchema } from "./schema.ts";
 import { configSchema } from "./config.ts";
+import {
+  extractScalarTypes,
+  renderScalarImports,
+} from "./generator/scalars.ts";
 import { schemaToCli } from "./cli.ts";
 
 const configPath = path.resolve("./enodia.config.ts");
@@ -114,7 +118,9 @@ if (!configExists) {
   await writeFile(
     configPath,
     [
-      'import { defineConfig } from "enodia";',
+      `import { defineConfig${
+        scalarTypes.length > 0 ? ", scalar" : ""
+      } } from "enodia";`,
       "",
       "export default defineConfig({",
       `  schema: "${schemaLocation}",`,
@@ -125,7 +131,7 @@ if (!configExists) {
             .concat(
               scalarTypes.map(
                 ([graphql, typescript]) =>
-                  `    ${graphql}: { name: "${typescript}" },`,
+                  `    ${graphql}: scalar<${typescript}>(),`,
               ),
             )
             .concat(["  },"])
@@ -149,6 +155,8 @@ if (!validatedConfig.success) {
 
 const config = validatedConfig.data;
 
+const scalarTypes = extractScalarTypes(configPath);
+
 console.log("- Fetching schema");
 const schema = await getSchema(config.schema);
 console.log("✓ Fetched schema");
@@ -168,7 +176,12 @@ if (config.client) {
   await writeFile(
     config.client.path,
     schemaToWeb(schema, {
-      scalarTypes: config.scalars || {},
+      scalarTypes,
+      scalarImports: renderScalarImports(
+        scalarTypes,
+        configPath,
+        resolve(config.client.path),
+      ),
       withReact: config.client.react,
     }),
   );
@@ -180,7 +193,12 @@ if (config.server) {
   await writeFile(
     config.server.path,
     schemaToServer(schema, {
-      scalarTypes: config.scalars || {},
+      scalarTypes,
+      scalarImports: renderScalarImports(
+        scalarTypes,
+        configPath,
+        resolve(config.server.path),
+      ),
     }),
   );
   console.log("✓ Wrote server at", resolve(config.server.path));
@@ -191,7 +209,12 @@ if (config.cli) {
   await writeFile(
     config.cli.path,
     schemaToCli(schema, {
-      scalarTypes: config.scalars || {},
+      scalarTypes,
+      scalarImports: renderScalarImports(
+        scalarTypes,
+        configPath,
+        resolve(config.cli.path),
+      ),
     }),
   );
   console.log("✓ Wrote cli at", resolve(config.cli.path));

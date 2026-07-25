@@ -8,10 +8,9 @@ import {
   TypeNode,
   UnionTypeDefinitionNode,
 } from "graphql";
-import { GqlScalarToTs, ScalarType } from "./types.ts";
+import { GqlScalarToTs, ScalarTypeInfo } from "./types.ts";
 import {
   baseScalars,
-  customScalarsImports,
   getMutations,
   getObjectTypes,
   getQueries,
@@ -594,18 +593,19 @@ const server = (
 // Server generator
 
 type Options = {
-  scalarTypes: Record<string, ScalarType>;
+  scalarTypes: Record<string, ScalarTypeInfo>;
+  scalarImports: string;
 };
 
-const schemaToServer = (schema: DocumentNode, { scalarTypes }: Options) => {
-  const { customScalars, scalars, enums, unions } = resolveScalars(
-    schema,
-    scalarTypes,
-  );
+const schemaToServer = (
+  schema: DocumentNode,
+  { scalarTypes, scalarImports }: Options,
+) => {
+  const { scalars, enums, unions } = resolveScalars(schema, scalarTypes);
 
   return [
     imports(),
-    customScalarsImports(scalarTypes, customScalars),
+    scalarImports,
     types(schema, scalars, enums, unions),
     serverTypes(),
     queriesTypes(schema, scalars, enums, unions),

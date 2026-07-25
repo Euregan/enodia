@@ -5,10 +5,9 @@ import {
   InputValueDefinitionNode,
   EnumTypeDefinitionNode,
 } from "graphql";
-import { GqlScalarToTs, ScalarType } from "./types.ts";
+import { GqlScalarToTs, ScalarTypeInfo } from "./types.ts";
 import {
   argsToTsDeclaration,
-  customScalarsImports,
   fieldsConstraint,
   getMutations,
   getQueries,
@@ -420,22 +419,20 @@ const react = (
 // Client generator
 
 type Options = {
-  scalarTypes: Record<string, ScalarType>;
+  scalarTypes: Record<string, ScalarTypeInfo>;
+  scalarImports: string;
   withReact?: { url: string };
 };
 
 const schemaToWeb = (
   schema: DocumentNode,
-  { scalarTypes, withReact }: Options,
+  { scalarTypes, scalarImports, withReact }: Options,
 ) => {
-  const { customScalars, scalars, enums, unions } = resolveScalars(
-    schema,
-    scalarTypes,
-  );
+  const { scalars, enums, unions } = resolveScalars(schema, scalarTypes);
 
   return [
     imports(!!withReact),
-    customScalarsImports(scalarTypes, customScalars),
+    scalarImports,
     types(schema, scalars, enums, unions),
     clientTypes(schema, !!withReact),
     queryArgsToTypes(schema, scalars, enums, unions),
