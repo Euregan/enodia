@@ -84,8 +84,14 @@ const call = (withCodecs: boolean) =>
     "  queryOrMutation: 'query' | 'mutation',",
     "  options: CallOptions = {}",
     ") => {",
-    "    if (options.cache && hasCache(query, returns, args)) {",
+    "    const fetchPolicy = options.fetchPolicy || 'network-only';",
+    "",
+    "    if (fetchPolicy !== 'network-only' && fetchPolicy !== 'no-cache' && hasCache(query, returns, args)) {",
     "      return getCache(query, returns, args);",
+    "    }",
+    "",
+    "    if (fetchPolicy === 'cache-only') {",
+    '      throw new Error(`No cached data for query "${query}" with fetchPolicy "cache-only".`);',
     "    }",
     "",
     "    const result = await (options.fetch || fetch)(graphqlServerUrl, {",
@@ -116,7 +122,9 @@ const call = (withCodecs: boolean) =>
           "",
         ]
       : []),
-    "    setCache(query, returns, args, result);",
+    "    if (fetchPolicy !== 'no-cache') {",
+    "      setCache(query, returns, args, result);",
+    "    }",
     "",
     "    return result;",
     "}",
@@ -234,22 +242,38 @@ const react = (
   const mutations = getMutations(schema);
 
   return (queries?.fields || [])
-    .map((field) =>
-      [
-        `export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
-          1,
-        )}Query = ${
-          !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+    .map((field) => {
+      const name = field.name.value;
+      const usesQuerySelection =
+        !isScalar(field.type, scalars) && !isEnum(field.type, enums);
+      const hasArgs = !!(field.arguments && field.arguments.length > 0);
+      const callPrefix = `call('${url}', '${name}', ${
+        !isScalar(field.type, scalars) ? "query" : "null"
+      }${
+        field.arguments && field.arguments.length > 0
+          ? `, args, { ${gqlArgTypes(field.arguments)} }`
+          : ", undefined, undefined"
+      }, ${
+        isEnum(field.type, enums) || isScalar(field.type, scalars)
+          ? "null"
+          : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
+      }, "query"`;
+      const inputDeps = [
+        usesQuerySelection ? "JSON.stringify(query)" : null,
+        hasArgs ? "JSON.stringify(args)" : null,
+      ].filter(Boolean);
+
+      return [
+        `export const use${name[0].toUpperCase()}${name.slice(1)}Query = ${
+          usesQuerySelection
             ? `<${fieldsConstraint(field.type, scalars, enums)}>`
             : ""
         }(`,
         `  ${queryFunctionParameters(field, scalars, enums)}${
-          (!isScalar(field.type, scalars) && !isEnum(field.type, enums)) ||
-          (field.arguments && field.arguments.length > 0)
-            ? ", "
-            : ""
-        }skip?: boolean`,
+          usesQuerySelection || hasArgs ? ", " : ""
+        }options: { skip?: boolean; fetchPolicy?: HookFetchPolicy } = {}`,
         `): QueryResult<${queryResult(field.type, scalars, enums)}> => {`,
+        "  const { skip, fetchPolicy = 'network-only' } = options;",
         "  const [error, setError] = useState<Error | null>(null);",
         "  // We use undefined as the empty value so we can discriminate between the loading state and the null returned by the API",
         `  const [data, setData] = useState<${queryResult(
@@ -260,72 +284,35 @@ const react = (
         "",
         "  const fetch = useCallback(",
         "    () =>",
-        `      call('${url}', '${field.name.value}', ${
-          !isScalar(field.type, scalars) ? "query" : "null"
-        }${
-          field.arguments && field.arguments.length > 0
-            ? `, args, { ${gqlArgTypes(field.arguments)} }`
-            : ", undefined, undefined"
-        }, ${
-          isEnum(field.type, enums) || isScalar(field.type, scalars)
-            ? "null"
-            : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
-        }, "query", { cache: false })`,
+        `      ${callPrefix}, { fetchPolicy: 'network-only' })`,
         "        .then(({ data }) => {",
-        `          setData(data.${field.name.value});`,
-        `          return data.${field.name.value};`,
+        `          setData(data.${name});`,
+        `          return data.${name};`,
         "        })",
         "        .catch((error: Error) => {",
         "          setError(error);",
         "        }),",
-        `    [${
-          !isScalar(field.type, scalars) && !isEnum(field.type, enums)
-            ? "JSON.stringify(query)"
-            : ""
-        }${
-          !isScalar(field.type, scalars) &&
-          !isEnum(field.type, enums) &&
-          field.arguments &&
-          field.arguments.length > 0
-            ? ", "
-            : ""
-        }${
-          field.arguments && field.arguments.length > 0
-            ? "JSON.stringify(args)"
-            : ""
-        }]`,
+        `    [${inputDeps.join(", ")}]`,
         "  );",
         "",
         "  useEffect(() => {",
         "    if (!skip) {",
-        `      call('${url}', '${field.name.value}', ${
-          !isScalar(field.type, scalars) ? "query" : "null"
-        }${
-          field.arguments && field.arguments.length > 0
-            ? `, args, { ${gqlArgTypes(field.arguments)} }`
-            : ", undefined, undefined"
-        }, ${
-          isEnum(field.type, enums) || isScalar(field.type, scalars)
-            ? "null"
-            : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
-        }, "query")`,
+        "      if (fetchPolicy === 'cache-and-network') {",
+        `        ${callPrefix}, { fetchPolicy: 'cache-only' })`,
+        `          .then(({ data }) => { setData(data.${name}); })`,
+        "          .catch(() => {});",
+        "      }",
+        "",
+        `      ${callPrefix}, { fetchPolicy: fetchPolicy === 'cache-and-network' ? 'network-only' : fetchPolicy })`,
         "        .then(({ data }) => {",
-        `          setData(data.${field.name.value});`,
-        `          return data.${field.name.value};`,
+        `          setData(data.${name});`,
+        `          return data.${name};`,
         "        })",
         "        .catch((error: Error) => {",
         "          setError(error);",
         "        })",
         "    }",
-        `  }, [skip${
-          !isScalar(field.type, scalars) && !isEnum(field.type, enums)
-            ? ", JSON.stringify(query)"
-            : ""
-        }${
-          field.arguments && field.arguments.length > 0
-            ? ", JSON.stringify(args)"
-            : ""
-        }]);`,
+        `  }, [${["skip", ...inputDeps, "fetchPolicy"].join(", ")}]);`,
         "",
         "  if (error) {",
         "    return [false, error, null, fetch];",
@@ -337,8 +324,8 @@ const react = (
         "",
         "  return [true, null, null, fetch];",
         "}",
-      ].join("\n"),
-    )
+      ].join("\n");
+    })
     .concat(
       (mutations?.fields || []).map((field) =>
         [

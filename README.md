@@ -69,6 +69,47 @@ authentication, for example. This function will return the instantiated client.
 The client has two properties, `query` and `mutation` containing functions to
 call every query and mutation your GraphQL API exposes.
 
+#### Fetch policy
+
+The configuration object accepts a `fetchPolicy` that controls how the client's
+in-memory cache is used. Results are cached per query, selection, and arguments.
+
+```typescript
+const client = enodia("https://api.example.com/graphql", {
+  fetchPolicy: "cache-first",
+});
+```
+
+The available policies are:
+
+- `network-only` (default): always fetches, and stores the result in the cache.
+- `cache-first`: returns the cached result if there is one, otherwise fetches
+  and stores it.
+- `no-cache`: always fetches, and never reads from or writes to the cache.
+- `cache-only`: returns the cached result if there is one, otherwise throws
+  without ever hitting the network.
+
+The default is `network-only`, so the client keeps fetching unless you opt into
+caching. The cache lives for the lifetime of
+the client instance and is not invalidated by mutations. The policy is set once
+per client.
+
+When you generate React hooks, each query hook takes a trailing options object
+with `skip` and `fetchPolicy`, the latter defaulting to `network-only`:
+
+```typescript
+const [loading, error, user] = useUserQuery(
+  ["id", "name"],
+  { id },
+  { fetchPolicy: "cache-and-network" },
+);
+```
+
+Hooks additionally support `cache-and-network`: the hook shows cached data
+immediately (if any) and then refetches from the network, updating when the
+response arrives. This policy only exists on the hooks — the plain client's
+`call` resolves a single promise, so it has no way to emit twice.
+
 #### Unions
 
 Fields returning a union are selected with a `$on` object keyed by the member
@@ -185,8 +226,8 @@ export default defineConfig({
 
 The types that need nothing more are the ones that are already valid JSON:
 `string`, `number`, `boolean`, `null`, and arrays or objects built from them, at
-any depth. An object whose fields are all JSON works as-is, because it serializes
-and comes back as the same value:
+any depth. An object whose fields are all JSON works as-is, because it
+serializes and comes back as the same value:
 
 ```typescript
 scalars: {
@@ -207,8 +248,8 @@ usually needs a codec anyway.
 
 A GraphQL scalar always travels over the wire as JSON, so a `Date` arrives as a
 string. To turn that string back into the type you asked for, give the scalar a
-codec with an `encode` and a `decode` function. `encode` turns your type into its
-wire value, and `decode` turns a wire value back into your type:
+codec with an `encode` and a `decode` function. `encode` turns your type into
+its wire value, and `decode` turns a wire value back into your type:
 
 ```typescript
 import { defineConfig, scalar } from "enodia";

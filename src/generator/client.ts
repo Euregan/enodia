@@ -18,9 +18,11 @@ import { GqlScalarToTs } from "../types.ts";
 export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
   (
     [
+      "type FetchPolicy = 'cache-first' | 'network-only' | 'no-cache' | 'cache-only';",
+      "",
       "type CallOptions = {",
       "  fetch?: typeof fetch;",
-      "  cache?: boolean",
+      "  fetchPolicy?: FetchPolicy",
       "  headers?: Record<string, string>",
       "};",
     ] as Array<string>
@@ -30,6 +32,8 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
         ? [
             "",
             "type Error = string;",
+            "",
+            "type HookFetchPolicy = FetchPolicy | 'cache-and-network';",
             "",
             "/**",
             " * The type returned by the query hook.",
