@@ -14,6 +14,9 @@ importers:
       prompts:
         specifier: ^2.4.2
         version: 2.4.2
+      typescript:
+        specifier: ^5.0.2
+        version: 5.8.3
       zod:
         specifier: ^3.22.2
         version: 3.25.75
@@ -36,9 +39,6 @@ importers:
       tsx:
         specifier: ^4.9.3
         version: 4.20.3
-      typescript:
-        specifier: ^5.0.2
-        version: 5.8.3
       vitest:
         specifier: ^0.34.3
         version: 0.34.6
