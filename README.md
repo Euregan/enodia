@@ -94,9 +94,8 @@ feed.forEach((item) => {
 });
 ```
 
-On the server, resolvers for a union-typed field must return the matching
-member tagged with its `__typename` so the server can resolve the concrete
-type.
+On the server, resolvers for a union-typed field must return the matching member
+tagged with its `__typename` so the server can resolve the concrete type.
 
 ## Configuration
 
@@ -171,20 +170,23 @@ export default defineConfig({
 
 This is a map of custom scalar types in your GraphQL schema to Typescript types.
 Each scalar is declared with `scalar<YourType>()`, so Enodia has you specify the
-actual type rather than defaulting to `any`. For example, mapping a `Date` scalar
-to the built-in `Date` type:
+actual type rather than defaulting to `any`. When the scalar is already valid
+JSON, such as an id carried as a string, that is all you need:
 
 ```typescript
 import { defineConfig, scalar } from "enodia";
 
 export default defineConfig({
   scalars: {
-    Date: scalar<Date>(),
+    UUID: scalar<string>(),
   },
 });
 ```
 
-Any type works, including inline object types:
+The types that need nothing more are the ones that are already valid JSON:
+`string`, `number`, `boolean`, `null`, and arrays or objects built from them, at
+any depth. An object whose fields are all JSON works as-is, because it serializes
+and comes back as the same value:
 
 ```typescript
 scalars: {
@@ -192,24 +194,65 @@ scalars: {
 },
 ```
 
-If the type comes from an import, just import it in your config as usual and use
-it. Enodia reads the imports your scalar types rely on and replicates them in
-every generated file, rewriting relative paths so they resolve from the
-generated file's location:
+The check is recursive, so a single field that is not JSON, such as a `Date`,
+makes the whole scalar require a codec.
+
+A type that is not valid JSON on its own, such as a `Date`, cannot be declared
+with `scalar<Date>()` alone. Enodia requires it to carry a codec, described in
+[Codecs](#codecs) below, so it knows how to convert the value to and from the
+wire. Importing a type for a scalar is covered there as well, since such a type
+usually needs a codec anyway.
+
+#### Codecs
+
+A GraphQL scalar always travels over the wire as JSON, so a `Date` arrives as a
+string. To turn that string back into the type you asked for, give the scalar a
+codec with an `encode` and a `decode` function. `encode` turns your type into its
+wire value, and `decode` turns a wire value back into your type:
 
 ```typescript
 import { defineConfig, scalar } from "enodia";
-import { DateTime } from "luxon";
-import type { Json } from "./types";
 
 export default defineConfig({
   scalars: {
-    DateTime: scalar<DateTime>(),
-    Json: scalar<Json>(),
+    DateTime: scalar<Date, string>({
+      encode: (value) => value.toISOString(),
+      decode: (value) => new Date(value),
+    }),
   },
 });
 ```
 
-Because the imports are replicated instead of copied, the generated files always
-reference the original type. Updating it in its source module is enough, and the
-generated copy never goes stale.
+The second type argument is the wire type, the shape the scalar has as JSON. It
+is optional and defaults to `unknown`, but giving it lets `decode` receive a
+typed `value` instead of having to cast it.
+
+Each side then applies the codec in the direction that fits it. On the client,
+responses come back as real `Date` objects, and `Date` arguments you pass are
+encoded to strings before they are sent, including when they are nested inside
+input objects. On the server, the same codec encodes the values your resolvers
+return and decodes the arguments they receive.
+
+The type and the codec functions are read straight from your config, so they can
+rely on imports. This is the usual case, since a type worth a codec often comes
+from a library:
+
+```typescript
+import { defineConfig, scalar } from "enodia";
+import Decimal from "decimal.js";
+
+export default defineConfig({
+  scalars: {
+    BigDecimal: scalar<Decimal, string>({
+      encode: (value) => value.toString(),
+      decode: (value) => new Decimal(value),
+    }),
+  },
+});
+```
+
+Enodia replicates every import the type and its codec depend on into the
+generated files, rewriting relative paths so they resolve from each generated
+file's location. Because the imports are replicated instead of copied, the
+generated files always reference the original, so updating it in its source
+module is enough and the generated copy never goes stale.

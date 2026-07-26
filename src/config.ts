@@ -3,7 +3,18 @@ import { schemaConfigSchema } from "./schema.ts";
 
 export type ScalarType<T> = { readonly __scalar?: T };
 
-export const scalar = <T>(): ScalarType<T> => ({});
+type Json = string | number | boolean | null | Json[] | { [key: string]: Json };
+
+type Wire<W> = unknown extends W ? W : [W] extends [Json] ? W : never;
+
+export type Codec<T, W> = {
+  encode: (value: T) => Wire<W>;
+  decode: (value: Wire<W>) => T;
+};
+
+export const scalar = <T, W = unknown>(
+  ..._codec: T extends Json ? [codec?: Codec<T, W>] : [codec: Codec<T, W>]
+): ScalarType<T> => ({});
 
 export const configSchema = z.object({
   schema: schemaConfigSchema,

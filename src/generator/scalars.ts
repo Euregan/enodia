@@ -19,6 +19,7 @@ const importBindings = (source: ts.SourceFile): Map<string, ImportBinding> => {
         name: clause.name.text,
         isDefault: true,
         specifier,
+        typeOnly: clause.isTypeOnly,
       });
     }
     if (clause?.namedBindings && ts.isNamedImports(clause.namedBindings)) {
@@ -27,6 +28,7 @@ const importBindings = (source: ts.SourceFile): Map<string, ImportBinding> => {
           name: element.name.text,
           isDefault: false,
           specifier,
+          typeOnly: clause.isTypeOnly || element.isTypeOnly,
         });
       }
     }
@@ -62,16 +64,69 @@ const scalarsObjectLiteral = (
   return scalars;
 };
 
-const referencedTypeNames = (typeNode: ts.TypeNode): Array<string> => {
-  const names: Array<string> = [];
-  const visit = (node: ts.Node) => {
-    if (ts.isTypeReferenceNode(node) && ts.isIdentifier(node.typeName)) {
-      names.push(node.typeName.text);
+const isDeclarationOrPropertyName = (identifier: ts.Identifier): boolean => {
+  const parent = identifier.parent;
+  return (
+    (ts.isPropertyAccessExpression(parent) && parent.name === identifier) ||
+    (ts.isPropertyAssignment(parent) && parent.name === identifier) ||
+    (ts.isShorthandPropertyAssignment(parent) && parent.name === identifier) ||
+    (ts.isPropertySignature(parent) && parent.name === identifier) ||
+    (ts.isParameter(parent) && parent.name === identifier) ||
+    (ts.isBindingElement(parent) && parent.name === identifier)
+  );
+};
+
+// Names a node uses but does not define itself (so not its own parameters or
+// local variables). For a scalar type or a codec function, these are the names
+// that must come from an import, which tells us which config imports to copy
+// into the generated files.
+const namesUsedButNotDefined = (node: ts.Node): Array<string> => {
+  const parameters = new Set<string>();
+  const locals = new Set<string>();
+  const used = new Set<string>();
+
+  const collectParameters = (current: ts.Node) => {
+    if (ts.isParameter(current) && ts.isIdentifier(current.name)) {
+      parameters.add(current.name.text);
     }
-    ts.forEachChild(node, visit);
+    ts.forEachChild(current, collectParameters);
   };
-  visit(typeNode);
-  return names;
+  collectParameters(node);
+
+  const collect = (current: ts.Node) => {
+    if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name)) {
+      locals.add(current.name.text);
+    }
+    if (ts.isTypeReferenceNode(current) && ts.isIdentifier(current.typeName)) {
+      used.add(current.typeName.text);
+    }
+    if (ts.isIdentifier(current) && !isDeclarationOrPropertyName(current)) {
+      used.add(current.text);
+    }
+    ts.forEachChild(current, collect);
+  };
+  collect(node);
+
+  return [...used].filter((id) => !parameters.has(id) && !locals.has(id));
+};
+
+const codecFunction = (
+  codec: ts.Expression | undefined,
+  which: "encode" | "decode",
+  source: ts.SourceFile,
+): ts.Expression | null => {
+  if (!codec || !ts.isObjectLiteralExpression(codec)) {
+    return null;
+  }
+  for (const property of codec.properties) {
+    if (
+      ts.isPropertyAssignment(property) &&
+      property.name.getText(source) === which
+    ) {
+      return property.initializer;
+    }
+  }
+  return null;
 };
 
 export const extractScalarTypes = (
@@ -101,22 +156,29 @@ export const extractScalarTypes = (
     if (!ts.isCallExpression(call) || !call.typeArguments?.[0]) {
       throw `Scalar ${name} must be declared with scalar<YourType>().`;
     }
+
     const typeNode = call.typeArguments[0];
+    const encode = codecFunction(call.arguments[0], "encode", source);
+    const decode = codecFunction(call.arguments[0], "decode", source);
+
+    const imports = new Map<string, ImportBinding>();
+    for (const node of [typeNode, encode, decode]) {
+      if (!node) {
+        continue;
+      }
+      for (const referenced of namesUsedButNotDefined(node)) {
+        const binding = bindings.get(referenced);
+        if (binding) {
+          imports.set(`${binding.specifier}#${binding.name}`, binding);
+        }
+      }
+    }
+
     scalarTypes[name] = {
       type: typeNode.getText(source),
-      imports: [
-        ...new Map(
-          referencedTypeNames(typeNode)
-            .map((referenced) => bindings.get(referenced))
-            .filter(
-              (binding): binding is ImportBinding => binding !== undefined,
-            )
-            .map((binding) => [
-              `${binding.specifier}#${binding.name}`,
-              binding,
-            ]),
-        ).values(),
-      ],
+      ...(encode ? { encode: encode.getText(source) } : {}),
+      ...(decode ? { decode: decode.getText(source) } : {}),
+      imports: [...imports.values()],
     };
   }
 
@@ -143,37 +205,39 @@ export const renderScalarImports = (
   configPath: string,
   outputPath: string,
 ): string => {
-  const bySpecifier = new Map<
+  const groups = new Map<
     string,
     { named: Set<string>; defaults: Set<string> }
   >();
 
   for (const { imports } of Object.values(scalarTypes)) {
     for (const binding of imports) {
-      const specifier = rewriteSpecifier(
+      const key = `${binding.typeOnly}\n${rewriteSpecifier(
         binding.specifier,
         configPath,
         outputPath,
-      );
-      const group = bySpecifier.get(specifier) || {
+      )}`;
+      const group = groups.get(key) || {
         named: new Set<string>(),
         defaults: new Set<string>(),
       };
       (binding.isDefault ? group.defaults : group.named).add(binding.name);
-      bySpecifier.set(specifier, group);
+      groups.set(key, group);
     }
   }
 
-  return [...bySpecifier.entries()]
-    .flatMap(([specifier, { named, defaults }]) =>
-      [
+  return [...groups.entries()]
+    .flatMap(([key, { named, defaults }]) => {
+      const [typeOnly, specifier] = key.split("\n");
+      const keyword = typeOnly === "true" ? "import type" : "import";
+      return [
         ...[...defaults].map(
-          (name) => `import type ${name} from "${specifier}";`,
+          (name) => `${keyword} ${name} from "${specifier}";`,
         ),
         named.size > 0
-          ? `import type { ${[...named].join(", ")} } from "${specifier}";`
+          ? `${keyword} { ${[...named].join(", ")} } from "${specifier}";`
           : null,
-      ].filter((line): line is string => line !== null),
-    )
+      ].filter((line): line is string => line !== null);
+    })
     .join("\n");
 };

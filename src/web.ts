@@ -30,6 +30,7 @@ import {
   returnsToVariables,
   variablesToArgs,
 } from "./generator/client.ts";
+import { clientCodecRuntime, hasCodecs } from "./generator/codecs.ts";
 
 // Generators
 
@@ -71,7 +72,7 @@ const cache = () =>
     ") => cache[cacheKey(query, returns, args)];",
   ].join("\n");
 
-const call = () =>
+const call = (withCodecs: boolean) =>
   [
     "const call = async (",
     "  graphqlServerUrl: string,",
@@ -96,7 +97,9 @@ const call = () =>
     "        } {\\n ${query}${",
     "          args ? `(${variablesToArgs(args)})` : ''",
     "        }\\n ${fieldsToQuery(returns)} }`,",
-    "        variables: { ...args, ...returnsToVariables(returns) },",
+    withCodecs
+      ? "        variables: { ...encodeArguments(args, argTypes), ...returnsToVariables(returns) },"
+      : "        variables: { ...args, ...returnsToVariables(returns) },",
     "      }),",
     "      headers: {",
     "        'Content-Type': 'application/json',",
@@ -105,6 +108,14 @@ const call = () =>
     "      credentials: 'include',",
     "    }).then((response: Response) => response.json());",
     "",
+    ...(withCodecs
+      ? [
+          "    if (queryType && result && result.data) {",
+          "      result.data[query] = decodeResult(queryType.replace(/Query$/, ''), result.data[query]);",
+          "    }",
+          "",
+        ]
+      : []),
     "    setCache(query, returns, args, result);",
     "",
     "    return result;",
@@ -429,6 +440,7 @@ const schemaToWeb = (
   { scalarTypes, scalarImports, withReact }: Options,
 ) => {
   const { scalars, enums, unions } = resolveScalars(schema, scalarTypes);
+  const withCodecs = hasCodecs(scalars);
 
   return [
     imports(!!withReact),
@@ -441,8 +453,9 @@ const schemaToWeb = (
     argsToGql(),
     variablesToArgs(),
     returnsToVariables(),
+    withCodecs ? clientCodecRuntime(schema, scalars, enums, unions) : "",
     cache(),
-    call(),
+    call(withCodecs),
     queriesTypes(schema, scalars, enums, unions),
     client(schema, scalars, enums),
     withReact ? react(withReact.url, schema, scalars, enums) : "",

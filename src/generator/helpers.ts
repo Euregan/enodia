@@ -72,6 +72,9 @@ export const isScalar = (
 export const isGqlTypeOptional = (type: TypeNode): boolean =>
   type.kind !== Kind.NON_NULL_TYPE;
 
+export const baseName = (type: TypeNode): string =>
+  type.kind === Kind.NAMED_TYPE ? type.name.value : baseName(type.type);
+
 export const gqlTypeToGqlString = (type: TypeNode): string => {
   switch (type.kind) {
     case Kind.NAMED_TYPE: {
@@ -217,6 +220,11 @@ export const getObjectTypes = (
       !isEnum(node, enums),
   ) as Array<ObjectTypeDefinitionNode>;
 
+export const getInputTypes = (schema: DocumentNode) =>
+  schema.definitions.filter(
+    (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION,
+  ) as Array<InputObjectTypeDefinitionNode>;
+
 export const resolveScalars = (
   schema: DocumentNode,
   scalarTypes: Record<string, ScalarTypeInfo>,
@@ -230,7 +238,12 @@ export const resolveScalars = (
         // TODO: Write a nicer, more detailed error, with steps to solve
         throw `No type for scalar ${scalar.name.value}.`;
       }
-      return { gql: scalar.name.value, ts: type.type };
+      return {
+        gql: scalar.name.value,
+        ts: type.type,
+        encode: type.encode,
+        decode: type.decode,
+      };
     }),
   );
 

@@ -324,9 +324,15 @@ const typesFromConfiguration = (
     .filter((scalar) => !baseScalars.some((base) => base.gql === scalar.gql))
     .map(
       (scalar) =>
-        `const ${
-          scalar.gql
-        } = ${`new GraphQLScalarType({ name: "${scalar.gql}" })`}`,
+        `const ${scalar.gql} = new GraphQLScalarType({ name: "${scalar.gql}"${
+          scalar.encode
+            ? `, serialize: (value: any) => (${scalar.encode})(value)`
+            : ""
+        }${
+          scalar.decode
+            ? `, parseValue: (value: any) => (${scalar.decode})(value)`
+            : ""
+        } })`,
     );
 
   const enumTypes = enums.map(

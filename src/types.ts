@@ -1,12 +1,20 @@
-export type GqlScalarToTs = { gql: string; ts: string };
+export type GqlScalarToTs = {
+  gql: string;
+  ts: string;
+  encode?: string;
+  decode?: string;
+};
 
 export type ImportBinding = {
   name: string;
   isDefault: boolean;
   specifier: string;
+  typeOnly: boolean;
 };
 
 export type ScalarTypeInfo = {
   type: string;
+  encode?: string;
+  decode?: string;
   imports: Array<ImportBinding>;
 };
