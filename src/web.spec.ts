@@ -1,7 +1,7 @@
 import { beforeAll, expect, test, vi } from "vitest";
 import fs from "fs/promises";
 import { gql } from "graphql-tag";
-import schemaToWeb from "./web";
+import schemaToWeb from "./web.js";
 import ts from "typescript";
 
 beforeAll(async () => {
@@ -42,7 +42,15 @@ beforeAll(async () => {
       }
     `,
     {
-      scalarTypes: { Date: { name: "Date" } },
+      scalarTypes: {
+        Date: {
+          type: "Date",
+          encode: "(value) => value.toISOString()",
+          decode: "(value) => new Date(value)",
+          imports: [],
+        },
+      },
+      scalarImports: "",
       withReact: { url: "http://localhost:3000/graphql" },
     },
   );
@@ -88,7 +96,15 @@ beforeAll(async () => {
       }
     `,
     {
-      scalarTypes: { Date: { name: "Date" } },
+      scalarTypes: {
+        Date: {
+          type: "Date",
+          encode: "(value) => value.toISOString()",
+          decode: "(value) => new Date(value)",
+          imports: [],
+        },
+      },
+      scalarImports: "",
       withReact: { url: "http://localhost:3000/graphql" },
     },
   );
@@ -138,7 +154,7 @@ test("args generation for justQueries", async () => {
   let query = "";
   let variables = "";
 
-  const justQueries = (await import("../generated-tests-files/justQueries"))
+  const justQueries = (await import("../generated-tests-files/justQueries.js"))
     .default;
 
   const client = justQueries("", {
@@ -175,7 +191,7 @@ test("args generation for justQueries", async () => {
 test("union query generation", async () => {
   let query = "";
 
-  const justQueries = (await import("../generated-tests-files/justQueries"))
+  const justQueries = (await import("../generated-tests-files/justQueries.js"))
     .default;
 
   const client = justQueries("", {
@@ -207,7 +223,7 @@ test("args generation for queriesAndMutations", async () => {
   let variables = "";
 
   const queriesAndMutations = (
-    await import("../generated-tests-files/queriesAndMutations")
+    await import("../generated-tests-files/queriesAndMutations.js")
   ).default;
 
   const client = queriesAndMutations("", {

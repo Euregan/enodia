@@ -72,7 +72,7 @@ call every query and mutation your GraphQL API exposes.
 #### Fetch policy
 
 The configuration object accepts a `fetchPolicy` that controls how the client's
-in-memory cache is used. Results are cached per query, selection, and arguments.
+in-memory cache is used.
 
 ```typescript
 const client = enodia("https://api.example.com/graphql", {
@@ -91,8 +91,32 @@ The available policies are:
 
 The default is `network-only`, so the client keeps fetching unless you opt into
 caching. You can change this default with the [`fetchPolicy`](#fetchpolicy)
-config option. The cache lives for the lifetime of the client instance and is
-not invalidated by mutations. The policy is set once per client.
+config option. The policy is set once per client.
+
+##### Normalized cache
+
+The cache is **normalized by entity**. Any object type that exposes an `id`
+field is stored once under a `Type:id` key, and Enodia automatically requests
+`id` (and `__typename` on unions) for those types even when you did not select
+them — it strips them back out of the result so you still get exactly the fields
+you asked for. Because every query points at the same stored entities:
+
+- Fetching `user(id: "1") { name }` then `user(id: "1") { email }` leaves the
+  cached `User:1` holding both fields, so a later `{ name, email }` read is a
+  cache hit.
+- A mutation that returns an entity updates it in place, so queries already
+  holding that entity see the new values without refetching.
+
+A query that returns a single entity through one `ID` argument (like
+`user(id: ID!): User`) is also served straight from the entity store: if a
+`users` query already loaded `User:2`, then `user(id: "2")` is a cache hit even
+though that exact query never ran. This redirect only applies to `ID`-typed
+arguments, and still falls back to the network if the cached entity is missing a
+requested field.
+
+The cache is shared across every client created from the generated file and
+lives for the lifetime of the process. One thing it does **not** do yet: lists
+are not invalidated when a mutation creates or deletes a member.
 
 When you generate React hooks, each query hook takes a trailing options object
 with `skip` and `fetchPolicy`, the latter defaulting to `network-only`:

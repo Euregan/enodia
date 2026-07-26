@@ -4,11 +4,14 @@ exports[`args generation for justQueries 1`] = `
 "query user($id: ID!, $posts_comments_userId: ID) {
  user(id: $id)
  {
-  name
+  id
+name
 posts {
-  content
+  id
+content
 comments(userId: $posts_comments_userId) {
-  content
+  id
+content
 
 }
 }
@@ -26,11 +29,14 @@ exports[`args generation for queriesAndMutations 1`] = `
 "query user($id: ID!, $posts_comments_userId: ID) {
  user(id: $id)
  {
-  name
+  id
+name
 posts {
-  content
+  id
+content
 comments(userId: $posts_comments_userId) {
-  content
+  id
+content
 
 }
 }
@@ -50,14 +56,17 @@ exports[`union query generation 1`] = `
  {
   __typename
 ... on Post {
-  content
+  id
+content
 comments {
-  content
+  id
+content
 
 }
 }
 ... on Comment {
-  content
+  id
+content
 
 }
 } }"

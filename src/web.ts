@@ -4,6 +4,8 @@ import {
   FieldDefinitionNode,
   InputValueDefinitionNode,
   EnumTypeDefinitionNode,
+  Kind,
+  TypeNode,
 } from "graphql";
 import {
   FetchPolicy,
@@ -13,13 +15,16 @@ import {
 } from "./types.ts";
 import {
   argsToTsDeclaration,
+  baseName,
   fieldsConstraint,
   getMutations,
+  getObjectTypes,
   getQueries,
   gqlTypeToGqlString,
   gqlTypeToTsName,
   isEnum,
   isGqlTypeOptional,
+  isListType,
   isScalar,
   queriesTypes,
   queryResult,
@@ -45,37 +50,180 @@ const imports = (hooks: boolean) =>
     : []
   ).join("\n");
 
-const cache = () =>
-  [
-    "const cache: Record<string, any> = {};",
+// A single (non-list) `ID` argument, so its value is safe to treat as the id.
+const isIdArgument = (type: TypeNode): boolean => {
+  const inner = type.kind === Kind.NON_NULL_TYPE ? type.type : type;
+  return inner.kind === Kind.NAMED_TYPE && inner.name.value === "ID";
+};
+
+const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
+  const entityTypes = getObjectTypes(schema, enums).filter((node) =>
+    (node.fields || []).some((f) => f.name.value === "id"),
+  );
+  const entityTypeNames = entityTypes.map((node) => node.name.value);
+  const entityKeys = entityTypes.map((node) => `  ${node.name.value}: 'id',`);
+
+  // Cache redirects: a query returning a single entity via one `ID` argument
+  // can be answered straight from the entity store, keyed by that argument.
+  const redirects = (getQueries(schema)?.fields || [])
+    .filter(
+      (field) =>
+        !isListType(field.type) &&
+        entityTypeNames.includes(baseName(field.type)) &&
+        field.arguments?.length === 1 &&
+        isIdArgument(field.arguments[0].type),
+    )
+    .map(
+      (field) => `  ${field.name.value}: '${field.arguments![0].name.value}',`,
+    );
+
+  return [
+    // Normalized cache: any object carrying an `id` is stored once under
+    // `Type:id`, so the same entity fetched through different queries stays in
+    // sync. `roots` keeps, per query+args, the shape of refs to rebuild from.
+    "const entities: Record<string, any> = {};",
+    "const roots: Record<string, any> = {};",
+    "const MISS = Symbol('miss');",
     "",
-    "const cacheKey = (",
-    "  query: string,",
-    "  returns: Fields,",
-    "  args: Record<string, Arguments> | undefined",
-    ") => `${JSON.stringify(query)}|${JSON.stringify(returns)}|${JSON.stringify(args)}`;",
-    "",
-    "const setCache = (",
-    "  query: string,",
-    "  returns: Fields,",
-    "  args: Record<string, Arguments> | undefined,",
-    "  data: any",
-    ") => {",
-    "  cache[cacheKey(query, returns, args)] = data;",
+    // The key field for each entity type (only types that expose an `id`).
+    "const entityKeys: Record<string, string> = {",
+    ...entityKeys,
     "};",
     "",
-    "const hasCache = (",
-    "  query: string,",
-    "  returns: Fields,",
-    "  args: Record<string, Arguments> | undefined",
-    ") => cacheKey(query, returns, args) in cache;",
+    // Query name -> the `ID` argument whose value identifies the returned entity.
+    "const redirects: Record<string, string> = {",
+    ...redirects,
+    "};",
     "",
-    "const getCache = (",
-    "  query: string,",
-    "  returns: Fields,",
-    "  args: Record<string, Arguments> | undefined",
-    ") => cache[cacheKey(query, returns, args)];",
+    "const rootKey = (query: string, args: Record<string, Arguments> | undefined) =>",
+    "  `${query}|${JSON.stringify(args ?? null)}`;",
+    "",
+    "const childQuery = (query: keyof typeof queryToGqlTypes, key: string): keyof typeof queryToGqlTypes =>",
+    "  (queryToGqlTypes[query] as any)[key].query;",
+    "",
+    // Add each entity's key field (and `__typename` on unions) to a selection so
+    // the response always carries what we need to identify and merge entities.
+    "const withEntityIds = (query: keyof typeof queryToGqlTypes, returns: Fields): Fields => {",
+    "  if (!returns) return returns;",
+    "  const mapped: any[] = returns.map((field: any) => {",
+    "    if (typeof field === 'string') return field;",
+    "    if ('$on' in field && field.$on) {",
+    "      const on: Record<string, any> = {};",
+    "      for (const [member, selection] of Object.entries(field.$on)) {",
+    "        on[member] = withEntityIds(`${member}Query` as keyof typeof queryToGqlTypes, selection as Fields);",
+    "      }",
+    "      return { ...field, $on: on };",
+    "    }",
+    "    const key = Object.keys(field).filter((k) => k !== '$args')[0] as string;",
+    "    return { ...field, [key]: withEntityIds(childQuery(query, key), field[key]) };",
+    "  });",
+    "  const additions: any[] = [];",
+    "  const keyField = entityKeys[query.replace(/Query$/, '')];",
+    "  if (keyField && !mapped.some((f) => f === keyField)) additions.push(keyField);",
+    "  if (mapped.some((f) => typeof f !== 'string' && '$on' in f) && !mapped.some((f) => f === '__typename')) additions.push('__typename');",
+    "  return [...additions, ...mapped];",
+    "};",
+    "",
+    // Walk a response along its selection, writing entities and returning the
+    // ref shape to store as a root (an object with `id` becomes `{ __ref }`).
+    "const normalize = (query: keyof typeof queryToGqlTypes, returns: Fields, data: any): any => {",
+    "  if (data === null || data === undefined) return data ?? null;",
+    "  const record: Record<string, any> = {};",
+    "  for (const field of returns ?? []) {",
+    "    if (typeof field === 'string') { record[field] = data[field]; continue; }",
+    "    if ('$on' in field && field.$on) {",
+    "      const selection = (field.$on as Record<string, Fields>)[data.__typename];",
+    "      if (selection) return normalize(`${data.__typename}Query` as keyof typeof queryToGqlTypes, selection, data);",
+    "      continue;",
+    "    }",
+    "    const key = Object.keys(field).filter((k) => k !== '$args')[0] as string;",
+    "    record[key] = normalizeChild(childQuery(query, key), (field as any)[key], data[key]);",
+    "  }",
+    "  const type = query.replace(/Query$/, '');",
+    "  const keyField = entityKeys[type];",
+    "  if (keyField && data[keyField] != null) {",
+    "    const id = `${type}:${data[keyField]}`;",
+    "    entities[id] = { ...(entities[id] || {}), ...record, __typename: type };",
+    "    return { __ref: id };",
+    "  }",
+    "  return record;",
+    "};",
+    "",
+    "const normalizeChild = (query: keyof typeof queryToGqlTypes, returns: Fields, value: any): any =>",
+    "  value === null || value === undefined",
+    "    ? value ?? null",
+    "    : Array.isArray(value)",
+    "    ? value.map((item) => normalize(query, returns, item))",
+    "    : normalize(query, returns, value);",
+    "",
+    // Rebuild a value from its stored ref shape, resolving entities. Returns MISS
+    // if any referenced entity or selected field is absent from the cache.
+    "const denormalize = (query: keyof typeof queryToGqlTypes, returns: Fields, node: any): any => {",
+    "  if (node === null || node === undefined) return node ?? null;",
+    "  const source = node.__ref ? entities[node.__ref] : node;",
+    "  if (!source) return MISS;",
+    "  const out: Record<string, any> = {};",
+    "  for (const field of returns ?? []) {",
+    "    if (typeof field === 'string') {",
+    "      if (!(field in source)) return MISS;",
+    "      out[field] = source[field];",
+    "      continue;",
+    "    }",
+    "    if ('$on' in field && field.$on) {",
+    "      const selection = (field.$on as Record<string, Fields>)[source.__typename];",
+    "      if (selection) {",
+    "        const member = denormalize(`${source.__typename}Query` as keyof typeof queryToGqlTypes, selection, node);",
+    "        if (member === MISS) return MISS;",
+    "        Object.assign(out, member);",
+    "      }",
+    "      continue;",
+    "    }",
+    "    const key = Object.keys(field).filter((k) => k !== '$args')[0] as string;",
+    "    if (!(key in source)) return MISS;",
+    "    const child = denormalizeChild(childQuery(query, key), (field as any)[key], source[key]);",
+    "    if (child === MISS) return MISS;",
+    "    out[key] = child;",
+    "  }",
+    "  return out;",
+    "};",
+    "",
+    "const denormalizeChild = (query: keyof typeof queryToGqlTypes, returns: Fields, value: any): any => {",
+    "  if (value === null || value === undefined) return value ?? null;",
+    "  if (!Array.isArray(value)) return denormalize(query, returns, value);",
+    "  const items: any[] = [];",
+    "  for (const item of value) {",
+    "    const child = denormalize(query, returns, item);",
+    "    if (child === MISS) return MISS;",
+    "    items.push(child);",
+    "  }",
+    "  return items;",
+    "};",
+    "",
+    "const readCache = (query: string, returns: Fields, args: Record<string, Arguments> | undefined, queryType: keyof typeof queryToGqlTypes | null) => {",
+    "  const key = rootKey(query, args);",
+    "  if (key in roots) {",
+    "    return queryType === null ? roots[key] : denormalizeChild(queryType, returns, roots[key]);",
+    "  }",
+    // No stored root, but a single-entity `ID` query can reach the entity
+    // directly, so a user loaded by one query is served to another.
+    "  const idArg = redirects[query];",
+    "  if (idArg && queryType !== null && args && args[idArg] != null) {",
+    "    return denormalize(queryType, returns, { __ref: `${queryType.replace(/Query$/, '')}:${args[idArg]}` });",
+    "  }",
+    "  return MISS;",
+    "};",
+    "",
+    "const writeCache = (query: string, returns: Fields, args: Record<string, Arguments> | undefined, queryType: keyof typeof queryToGqlTypes | null, queryOrMutation: 'query' | 'mutation', value: any) => {",
+    "  if (queryType === null) {",
+    "    if (queryOrMutation === 'query') roots[rootKey(query, args)] = value;",
+    "    return value;",
+    "  }",
+    "  const structure = normalizeChild(queryType, returns, value);",
+    "  if (queryOrMutation === 'query') roots[rootKey(query, args)] = structure;",
+    "  return structure;",
+    "};",
   ].join("\n");
+};
 
 const call = (withCodecs: boolean, defaultFetchPolicy: FetchPolicy) =>
   [
@@ -90,9 +238,13 @@ const call = (withCodecs: boolean, defaultFetchPolicy: FetchPolicy) =>
     "  options: CallOptions = {}",
     ") => {",
     `    const fetchPolicy = options.fetchPolicy || '${defaultFetchPolicy}';`,
+    // Fetch the entities' key fields too, so responses can be normalized.
+    "    const effectiveReturns = queryType !== null && fetchPolicy !== 'no-cache' ? withEntityIds(queryType, returns) : returns;",
     "",
-    "    if (fetchPolicy !== 'network-only' && fetchPolicy !== 'no-cache' && hasCache(query, returns, args)) {",
-    "      return getCache(query, returns, args);",
+    // Mutations always hit the network; only queries read the cache.
+    "    if (queryOrMutation === 'query' && fetchPolicy !== 'network-only' && fetchPolicy !== 'no-cache') {",
+    "      const cached = readCache(query, returns, args, queryType);",
+    "      if (cached !== MISS) return { data: { [query]: cached } };",
     "    }",
     "",
     "    if (fetchPolicy === 'cache-only') {",
@@ -104,13 +256,13 @@ const call = (withCodecs: boolean, defaultFetchPolicy: FetchPolicy) =>
     "      body: JSON.stringify({",
     "        operationName: query,",
     "        query: `${queryOrMutation} ${query}${",
-    "          argTypes && args ? `(${argsToGql(argTypes, args, queryType, returns)})` : ''",
+    "          argTypes && args ? `(${argsToGql(argTypes, args, queryType, effectiveReturns)})` : ''",
     "        } {\\n ${query}${",
     "          args ? `(${variablesToArgs(args)})` : ''",
-    "        }\\n ${fieldsToQuery(returns)} }`,",
+    "        }\\n ${fieldsToQuery(effectiveReturns)} }`,",
     withCodecs
-      ? "        variables: { ...encodeArguments(args, argTypes), ...returnsToVariables(returns) },"
-      : "        variables: { ...args, ...returnsToVariables(returns) },",
+      ? "        variables: { ...encodeArguments(args, argTypes), ...returnsToVariables(effectiveReturns) },"
+      : "        variables: { ...args, ...returnsToVariables(effectiveReturns) },",
     "      }),",
     "      headers: {",
     "        'Content-Type': 'application/json',",
@@ -119,16 +271,24 @@ const call = (withCodecs: boolean, defaultFetchPolicy: FetchPolicy) =>
     "      credentials: 'include',",
     "    }).then((response: Response) => response.json());",
     "",
+    "    if (!result || !result.data || result.data[query] === undefined) {",
+    "      return result;",
+    "    }",
+    "",
     ...(withCodecs
       ? [
-          "    if (queryType && result && result.data) {",
+          "    if (queryType) {",
           "      result.data[query] = decodeResult(queryType.replace(/Query$/, ''), result.data[query]);",
           "    }",
           "",
         ]
       : []),
     "    if (fetchPolicy !== 'no-cache') {",
-    "      setCache(query, returns, args, result);",
+    "      const structure = writeCache(query, effectiveReturns, args, queryType, queryOrMutation, result.data[query]);",
+    // Return the normalized value rebuilt for the original selection, so
+    // callers never see the key fields injected above
+    "      const clean = queryType === null ? structure : denormalizeChild(queryType, returns, structure);",
+    "      if (clean !== MISS) result.data[query] = clean;",
     "    }",
     "",
     "    return result;",
@@ -457,7 +617,7 @@ const schemaToWeb = (
     variablesToArgs(),
     returnsToVariables(),
     withCodecs ? clientCodecRuntime(schema, scalars, enums, unions) : "",
-    cache(),
+    store(schema, enums),
     call(withCodecs, callDefaultFetchPolicy),
     queriesTypes(schema, scalars, enums, unions),
     client(schema, scalars, enums),

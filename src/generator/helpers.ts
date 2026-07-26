@@ -72,6 +72,10 @@ export const isScalar = (
 export const isGqlTypeOptional = (type: TypeNode): boolean =>
   type.kind !== Kind.NON_NULL_TYPE;
 
+export const isListType = (type: TypeNode): boolean =>
+  type.kind === Kind.LIST_TYPE ||
+  (type.kind === Kind.NON_NULL_TYPE && type.type.kind === Kind.LIST_TYPE);
+
 export const baseName = (type: TypeNode): string =>
   type.kind === Kind.NAMED_TYPE ? type.name.value : baseName(type.type);
 
