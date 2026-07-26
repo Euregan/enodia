@@ -21,6 +21,15 @@ export const configSchema = z.object({
   client: z
     .object({
       path: z.string(),
+      fetchPolicy: z
+        .enum([
+          "cache-first",
+          "network-only",
+          "no-cache",
+          "cache-only",
+          "cache-and-network",
+        ])
+        .optional(),
       react: z
         .object({
           url: z.string(),

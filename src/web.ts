@@ -5,7 +5,12 @@ import {
   InputValueDefinitionNode,
   EnumTypeDefinitionNode,
 } from "graphql";
-import { GqlScalarToTs, ScalarTypeInfo } from "./types.ts";
+import {
+  FetchPolicy,
+  GqlScalarToTs,
+  HookFetchPolicy,
+  ScalarTypeInfo,
+} from "./types.ts";
 import {
   argsToTsDeclaration,
   fieldsConstraint,
@@ -72,7 +77,7 @@ const cache = () =>
     ") => cache[cacheKey(query, returns, args)];",
   ].join("\n");
 
-const call = (withCodecs: boolean) =>
+const call = (withCodecs: boolean, defaultFetchPolicy: FetchPolicy) =>
   [
     "const call = async (",
     "  graphqlServerUrl: string,",
@@ -84,7 +89,7 @@ const call = (withCodecs: boolean) =>
     "  queryOrMutation: 'query' | 'mutation',",
     "  options: CallOptions = {}",
     ") => {",
-    "    const fetchPolicy = options.fetchPolicy || 'network-only';",
+    `    const fetchPolicy = options.fetchPolicy || '${defaultFetchPolicy}';`,
     "",
     "    if (fetchPolicy !== 'network-only' && fetchPolicy !== 'no-cache' && hasCache(query, returns, args)) {",
     "      return getCache(query, returns, args);",
@@ -237,6 +242,7 @@ const react = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
+  defaultFetchPolicy: HookFetchPolicy,
 ) => {
   const queries = getQueries(schema);
   const mutations = getMutations(schema);
@@ -273,7 +279,7 @@ const react = (
           usesQuerySelection || hasArgs ? ", " : ""
         }options: { skip?: boolean; fetchPolicy?: HookFetchPolicy } = {}`,
         `): QueryResult<${queryResult(field.type, scalars, enums)}> => {`,
-        "  const { skip, fetchPolicy = 'network-only' } = options;",
+        `  const { skip, fetchPolicy = '${defaultFetchPolicy}' } = options;`,
         "  const [error, setError] = useState<Error | null>(null);",
         "  // We use undefined as the empty value so we can discriminate between the loading state and the null returned by the API",
         `  const [data, setData] = useState<${queryResult(
@@ -420,14 +426,24 @@ type Options = {
   scalarTypes: Record<string, ScalarTypeInfo>;
   scalarImports: string;
   withReact?: { url: string };
+  defaultFetchPolicy?: HookFetchPolicy;
 };
 
 const schemaToWeb = (
   schema: DocumentNode,
-  { scalarTypes, scalarImports, withReact }: Options,
+  {
+    scalarTypes,
+    scalarImports,
+    withReact,
+    defaultFetchPolicy = "network-only",
+  }: Options,
 ) => {
   const { scalars, enums, unions } = resolveScalars(schema, scalarTypes);
   const withCodecs = hasCodecs(scalars);
+  const callDefaultFetchPolicy: FetchPolicy =
+    defaultFetchPolicy === "cache-and-network"
+      ? "network-only"
+      : defaultFetchPolicy;
 
   return [
     imports(!!withReact),
@@ -442,10 +458,12 @@ const schemaToWeb = (
     returnsToVariables(),
     withCodecs ? clientCodecRuntime(schema, scalars, enums, unions) : "",
     cache(),
-    call(withCodecs),
+    call(withCodecs, callDefaultFetchPolicy),
     queriesTypes(schema, scalars, enums, unions),
     client(schema, scalars, enums),
-    withReact ? react(withReact.url, schema, scalars, enums) : "",
+    withReact
+      ? react(withReact.url, schema, scalars, enums, defaultFetchPolicy)
+      : "",
   ].join("\n\n");
 };
 

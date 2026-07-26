@@ -90,9 +90,9 @@ The available policies are:
   without ever hitting the network.
 
 The default is `network-only`, so the client keeps fetching unless you opt into
-caching. The cache lives for the lifetime of
-the client instance and is not invalidated by mutations. The policy is set once
-per client.
+caching. You can change this default with the [`fetchPolicy`](#fetchpolicy)
+config option. The cache lives for the lifetime of the client instance and is
+not invalidated by mutations. The policy is set once per client.
 
 When you generate React hooks, each query hook takes a trailing options object
 with `skip` and `fetchPolicy`, the latter defaulting to `network-only`:
@@ -174,6 +174,25 @@ export default defineConfig({
   },
 });
 ```
+
+#### `fetchPolicy`
+
+The [fetch policy](#fetch-policy) is `network-only` by default. You can change
+the default baked into the generated client and hooks here:
+
+```typescript
+export default defineConfig({
+  client: {
+    path: "./path/to/client.ts",
+    fetchPolicy: "cache-first",
+  },
+});
+```
+
+This only sets the default; both the client and the hooks still accept a
+`fetchPolicy` per call. You can set the default to `cache-and-network`, in which
+case the hooks use it while the plain client falls back to `network-only`, since
+a single promise can't emit twice.
 
 #### `react`
 

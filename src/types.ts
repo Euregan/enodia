@@ -1,3 +1,11 @@
+export type FetchPolicy =
+  | "cache-first"
+  | "network-only"
+  | "no-cache"
+  | "cache-only";
+
+export type HookFetchPolicy = FetchPolicy | "cache-and-network";
+
 export type GqlScalarToTs = {
   gql: string;
   ts: string;

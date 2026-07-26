@@ -183,6 +183,7 @@ if (config.client) {
         resolve(config.client.path),
       ),
       withReact: config.client.react,
+      defaultFetchPolicy: config.client.fetchPolicy,
     }),
   );
   console.log("✓ Wrote client at", resolve(config.client.path));
