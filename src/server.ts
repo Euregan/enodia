@@ -29,7 +29,7 @@ import {
 
 const toReturn = (type: string) => `${type} | Promise<${type}>`;
 
-const partialize = (type: string) => `Prettify<Omit<${type}, ${type}Keys>>`;
+const partialize = (type: string) => `Prettify$<Omit<${type}, ${type}Keys>>`;
 
 const gqlTypeToReturnTsString = (
   type: TypeNode,

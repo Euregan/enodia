@@ -256,3 +256,59 @@ test("args generation for queriesAndMutations", async () => {
   expect(query).toMatchSnapshot();
   expect(variables).toMatchSnapshot();
 });
+
+test("schema types colliding with reserved generator names typecheck cleanly", async () => {
+  const client = schemaToWeb(
+    gql`
+      type Error {
+        message: String!
+      }
+
+      type SpendingLimit {
+        amount: Int!
+        lastError: Error
+      }
+
+      type SpendingLimitResult {
+        success: Boolean!
+        limit: SpendingLimit
+      }
+
+      type Query {
+        lastError: Error
+        spendingLimit: SpendingLimit
+        spendingLimitResult: SpendingLimitResult
+      }
+    `,
+    {
+      scalarTypes: {},
+      scalarImports: "",
+      withReact: { url: "http://localhost:3000/graphql" },
+    },
+  );
+
+  await fs.mkdir("./generated-tests-files", { recursive: true });
+  await fs.writeFile("./generated-tests-files/nameCollisions.ts", client);
+
+  const program = ts.createProgram({
+    options: {
+      noEmit: true,
+      strict: true,
+      noUnusedLocals: true,
+      noUnusedParameters: true,
+      noFallthroughCasesInSwitch: true,
+    },
+    rootNames: ["./generated-tests-files/nameCollisions.ts"],
+  });
+
+  const errors = ts
+    .getPreEmitDiagnostics(program)
+    .concat(program.emit().diagnostics)
+    .map((error) => error.messageText);
+
+  if (errors.length > 0) {
+    console.log(errors);
+  }
+
+  expect(errors).toHaveLength(0);
+});

@@ -95,7 +95,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     ...redirects,
     "};",
     "",
-    "const rootKey = (query: string, args: Record<string, Arguments> | undefined) =>",
+    "const rootKey = (query: string, args: Record<string, Arguments$> | undefined) =>",
     "  `${query}|${JSON.stringify(args ?? null)}`;",
     "",
     "const childQuery = (query: keyof typeof queryToGqlTypes, key: string): keyof typeof queryToGqlTypes =>",
@@ -103,14 +103,14 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "",
     // Add each entity's key field (and `__typename` on unions) to a selection so
     // the response always carries what we need to identify and merge entities.
-    "const withEntityIds = (query: keyof typeof queryToGqlTypes, returns: Fields): Fields => {",
+    "const withEntityIds = (query: keyof typeof queryToGqlTypes, returns: Fields$): Fields$ => {",
     "  if (!returns) return returns;",
     "  const mapped: any[] = returns.map((field: any) => {",
     "    if (typeof field === 'string') return field;",
     "    if ('$on' in field && field.$on) {",
     "      const on: Record<string, any> = {};",
     "      for (const [member, selection] of Object.entries(field.$on)) {",
-    "        on[member] = withEntityIds(`${member}Query` as keyof typeof queryToGqlTypes, selection as Fields);",
+    "        on[member] = withEntityIds(`${member}Query` as keyof typeof queryToGqlTypes, selection as Fields$);",
     "      }",
     "      return { ...field, $on: on };",
     "    }",
@@ -126,13 +126,13 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "",
     // Walk a response along its selection, writing entities and returning the
     // ref shape to store as a root (an object with `id` becomes `{ __ref }`).
-    "const normalize = (query: keyof typeof queryToGqlTypes, returns: Fields, data: any): any => {",
+    "const normalize = (query: keyof typeof queryToGqlTypes, returns: Fields$, data: any): any => {",
     "  if (data === null || data === undefined) return data ?? null;",
     "  const record: Record<string, any> = {};",
     "  for (const field of returns ?? []) {",
     "    if (typeof field === 'string') { record[field] = data[field]; continue; }",
     "    if ('$on' in field && field.$on) {",
-    "      const selection = (field.$on as Record<string, Fields>)[data.__typename];",
+    "      const selection = (field.$on as Record<string, Fields$>)[data.__typename];",
     "      if (selection) return normalize(`${data.__typename}Query` as keyof typeof queryToGqlTypes, selection, data);",
     "      continue;",
     "    }",
@@ -149,7 +149,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "  return record;",
     "};",
     "",
-    "const normalizeChild = (query: keyof typeof queryToGqlTypes, returns: Fields, value: any): any =>",
+    "const normalizeChild = (query: keyof typeof queryToGqlTypes, returns: Fields$, value: any): any =>",
     "  value === null || value === undefined",
     "    ? value ?? null",
     "    : Array.isArray(value)",
@@ -158,7 +158,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "",
     // Rebuild a value from its stored ref shape, resolving entities. Returns MISS
     // if any referenced entity or selected field is absent from the cache.
-    "const denormalize = (query: keyof typeof queryToGqlTypes, returns: Fields, node: any): any => {",
+    "const denormalize = (query: keyof typeof queryToGqlTypes, returns: Fields$, node: any): any => {",
     "  if (node === null || node === undefined) return node ?? null;",
     "  const source = node.__ref ? entities[node.__ref] : node;",
     "  if (!source) return MISS;",
@@ -170,7 +170,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "      continue;",
     "    }",
     "    if ('$on' in field && field.$on) {",
-    "      const selection = (field.$on as Record<string, Fields>)[source.__typename];",
+    "      const selection = (field.$on as Record<string, Fields$>)[source.__typename];",
     "      if (selection) {",
     "        const member = denormalize(`${source.__typename}Query` as keyof typeof queryToGqlTypes, selection, node);",
     "        if (member === MISS) return MISS;",
@@ -187,7 +187,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "  return out;",
     "};",
     "",
-    "const denormalizeChild = (query: keyof typeof queryToGqlTypes, returns: Fields, value: any): any => {",
+    "const denormalizeChild = (query: keyof typeof queryToGqlTypes, returns: Fields$, value: any): any => {",
     "  if (value === null || value === undefined) return value ?? null;",
     "  if (!Array.isArray(value)) return denormalize(query, returns, value);",
     "  const items: any[] = [];",
@@ -199,7 +199,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "  return items;",
     "};",
     "",
-    "const readCache = (query: string, returns: Fields, args: Record<string, Arguments> | undefined, queryType: keyof typeof queryToGqlTypes | null) => {",
+    "const readCache = (query: string, returns: Fields$, args: Record<string, Arguments$> | undefined, queryType: keyof typeof queryToGqlTypes | null) => {",
     "  const key = rootKey(query, args);",
     "  if (key in roots) {",
     "    return queryType === null ? roots[key] : denormalizeChild(queryType, returns, roots[key]);",
@@ -213,7 +213,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "  return MISS;",
     "};",
     "",
-    "const writeCache = (query: string, returns: Fields, args: Record<string, Arguments> | undefined, queryType: keyof typeof queryToGqlTypes | null, queryOrMutation: 'query' | 'mutation', value: any) => {",
+    "const writeCache = (query: string, returns: Fields$, args: Record<string, Arguments$> | undefined, queryType: keyof typeof queryToGqlTypes | null, queryOrMutation: 'query' | 'mutation', value: any) => {",
     "  if (queryType === null) {",
     "    if (queryOrMutation === 'query') roots[rootKey(query, args)] = value;",
     "    return value;",
@@ -230,12 +230,12 @@ const call = (withCodecs: boolean, defaultFetchPolicy: FetchPolicy) =>
     "const call = async (",
     "  graphqlServerUrl: string,",
     "  query: string,",
-    "  returns: Fields,",
-    "  args: Record<string, Arguments> | undefined,",
-    "  argTypes: ArgumentTypes | undefined,",
+    "  returns: Fields$,",
+    "  args: Record<string, Arguments$> | undefined,",
+    "  argTypes: ArgumentTypes$ | undefined,",
     "  queryType: keyof typeof queryToGqlTypes | null,",
     "  queryOrMutation: 'query' | 'mutation',",
-    "  options: CallOptions = {}",
+    "  options: CallOptions$ = {}",
     ") => {",
     `    const fetchPolicy = options.fetchPolicy || '${defaultFetchPolicy}';`,
     // Fetch the entities' key fields too, so responses can be normalized.
@@ -373,7 +373,7 @@ const client = (
 
   return (
     // TODO: Handle custom headers (i.e. for authentication)
-    [`const enodia = (graphqlServerUrl: string, options?: CallOptions) => ({`]
+    [`const enodia = (graphqlServerUrl: string, options?: CallOptions$) => ({`]
       .concat(
         queries
           ? [
@@ -450,15 +450,15 @@ const react = (
         // right shape back based on the `fetchPolicy` they actually pass.
         `export function use${capitalizedName}Query${generic}(`,
         `  ${params}options: { skip?: boolean; fetchPolicy: 'cache-and-network' }`,
-        `): CacheAndNetworkQueryResult<${dataType}>;`,
+        `): CacheAndNetworkQueryResult$<${dataType}>;`,
         `export function use${capitalizedName}Query${generic}(`,
-        `  ${params}options?: { skip?: boolean; fetchPolicy?: Exclude<HookFetchPolicy, 'cache-and-network'> }`,
-        `): QueryResult<${dataType}>;`,
+        `  ${params}options?: { skip?: boolean; fetchPolicy?: Exclude<HookFetchPolicy$, 'cache-and-network'> }`,
+        `): QueryResult$<${dataType}>;`,
         `export function use${capitalizedName}Query${generic}(`,
-        `  ${params}options: { skip?: boolean; fetchPolicy?: HookFetchPolicy } = {}`,
-        `): CacheAndNetworkQueryResult<${dataType}> {`,
+        `  ${params}options: { skip?: boolean; fetchPolicy?: HookFetchPolicy$ } = {}`,
+        `): CacheAndNetworkQueryResult$<${dataType}> {`,
         `  const { skip, fetchPolicy = '${defaultFetchPolicy}' } = options;`,
-        `  const [state, setState] = useState<{ key: string; loading: boolean; error: Error | null; data: ${dataType} | undefined }>({`,
+        `  const [state, setState] = useState<{ key: string; loading: boolean; error: Error$ | null; data: ${dataType} | undefined }>({`,
         "    key: '',",
         "    loading: true,",
         "    error: null,",
@@ -475,7 +475,7 @@ const react = (
         `          setState((s) => (s.key === key ? { ...s, loading: false, data: data.${name} } : s));`,
         `          return data.${name};`,
         "        })",
-        "        .catch((error: Error) => {",
+        "        .catch((error: Error$) => {",
         "          setState((s) => (s.key === key ? { ...s, loading: false, error } : s));",
         "        });",
         "    },",
@@ -508,7 +508,7 @@ const react = (
         `          setState((s) => (s.key === key ? { ...s, loading: false, data: data.${name} } : s));`,
         "        }",
         "      })",
-        "      .catch((error: Error) => {",
+        "      .catch((error: Error$) => {",
         "        if (active) {",
         "          setState((s) => (s.key === key ? { ...s, loading: false, error } : s));",
         "        }",
@@ -552,13 +552,13 @@ const react = (
               ? "T"
               : queryResult(field.type, scalars, enums)
           }) => Promise<unknown>> = []`,
-          `): MutationResult<${
+          `): MutationResult$<${
             field.arguments && field.arguments.length > 0
               ? argsToTsDeclaration(field.arguments, scalars, enums, false)
               : "undefined"
           }, ${queryResult(field.type, scalars, enums)}> => {`,
           "  const [loading, setLoading] = useState<boolean>(false);",
-          "  const [error, setError] = useState<Error | null>(null);",
+          "  const [error, setError] = useState<Error$ | null>(null);",
           "  // We use undefined as the empty value so we can discriminate between the loading state and the null returned by the API",
           `  const [data, setData] = useState<${queryResult(
             field.type,
@@ -595,7 +595,7 @@ const react = (
           "",
           `        return data.${field.name.value};`,
           "      })",
-          "      .catch((error: Error) => {",
+          "      .catch((error: Error$) => {",
           "        setError(error);",
           "        setLoading(false);",
           "",

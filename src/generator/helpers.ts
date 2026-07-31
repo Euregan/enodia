@@ -169,7 +169,7 @@ export const queryResult = (
     ? gqlTypeToTsString({ type, scalars, enums })
     : `${gqlTypeToTsString(
         { type, scalars, enums },
-        { suffix: "Result<T>", optionalAsUndefined: false },
+        { suffix: "Result$<T>", optionalAsUndefined: false },
       )}${type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""}`;
 
 export const argsToTsDeclaration = (
@@ -266,13 +266,13 @@ export const types = (
   unions: Array<UnionTypeDefinitionNode>,
 ) =>
   [
-    "type Arguments = string | number | boolean | null | {",
-    "    [K in string]: Arguments;",
-    `} | Array<Arguments> | ${scalars.map((scalar) => scalar.ts).join(" | ")};`,
+    "type Arguments$ = string | number | boolean | null | {",
+    "    [K in string]: Arguments$;",
+    `} | Array<Arguments$> | ${scalars.map((scalar) => scalar.ts).join(" | ")};`,
     "",
-    "type ArgumentTypes = Record<string, string>;",
+    "type ArgumentTypes$ = Record<string, string>;",
     "",
-    "type Query = Prettify<",
+    "type Query = Prettify$<",
   ]
     .concat(
       (
@@ -291,15 +291,15 @@ export const types = (
     .concat([
       ">;",
       "",
-      "type Fields = null | Array<Query>;",
+      "type Fields$ = null | Array<Query>;",
       "",
-      "type Prettify<T> = {",
+      "type Prettify$<T> = {",
       "  [K in keyof T]: T[K];",
       "} & unknown;",
       "",
-      "type KeysOfUnion<T> = T extends T ? keyof T: never;",
+      "type KeysOfUnion$<T> = T extends T ? keyof T: never;",
       "",
-      "type MergedUnion<T> = (T extends unknown ? (k: T) => void : never) extends ((k: infer I) => void) ? I : never;",
+      "type MergedUnion$<T> = (T extends unknown ? (k: T) => void : never) extends ((k: infer I) => void) ? I : never;",
     ])
     .join("\n");
 
@@ -386,7 +386,7 @@ export const queriesTypes = (
   const results = getObjectTypes(schema, enums)
     .map((node) =>
       [
-        `type ${node.name.value}Result<T extends ${node.name.value}Query[number]> = Prettify<Omit<{`,
+        `type ${node.name.value}Result$<T extends ${node.name.value}Query[number]> = Prettify$<Omit<{`,
         "  [P in T extends string ? T : keyof T]:",
       ]
         .concat(
@@ -405,7 +405,7 @@ export const queriesTypes = (
                     field.type.type.kind === Kind.LIST_TYPE)
                     ? "Array<"
                     : ""
-                }${gqlTypeToTsName(field.type, scalars, enums)}Result<T['${
+                }${gqlTypeToTsName(field.type, scalars, enums)}Result$<T['${
                   field.name.value
                 }'][number]>${
                   field.type.kind === Kind.LIST_TYPE ||
@@ -485,14 +485,14 @@ export const queriesTypes = (
   const unionResults = unions
     .map(
       (node) =>
-        `type ${node.name.value}Result<T extends ${
+        `type ${node.name.value}Result$<T extends ${
           node.name.value
         }Query[number], WithTypename = '__typename' extends T ? true : false> =\n${(
           node.types || []
         )
           .map(
             (member) =>
-              `  | (T extends { $on: { ${member.name.value}: Array<infer Q extends ${member.name.value}Query[number]> } } ? Prettify<${member.name.value}Result<Q> & (WithTypename extends true ? { __typename: '${member.name.value}' } : {})> : never)`,
+              `  | (T extends { $on: { ${member.name.value}: Array<infer Q extends ${member.name.value}Query[number]> } } ? Prettify$<${member.name.value}Result$<Q> & (WithTypename extends true ? { __typename: '${member.name.value}' } : {})> : never)`,
           )
           .join("\n")};`,
     )

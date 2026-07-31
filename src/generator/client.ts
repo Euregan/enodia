@@ -18,11 +18,11 @@ import { GqlScalarToTs } from "../types.ts";
 export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
   (
     [
-      "type FetchPolicy = 'cache-first' | 'network-only' | 'no-cache' | 'cache-only';",
+      "type FetchPolicy$ = 'cache-first' | 'network-only' | 'no-cache' | 'cache-only';",
       "",
-      "type CallOptions = {",
+      "type CallOptions$ = {",
       "  fetch?: typeof fetch;",
-      "  fetchPolicy?: FetchPolicy",
+      "  fetchPolicy?: FetchPolicy$",
       "  headers?: Record<string, string>",
       "};",
     ] as Array<string>
@@ -31,9 +31,9 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
       react && getQueries(schema)
         ? [
             "",
-            "type Error = string;",
+            "type Error$ = string;",
             "",
-            "type HookFetchPolicy = FetchPolicy | 'cache-and-network';",
+            "type HookFetchPolicy$ = FetchPolicy$ | 'cache-and-network';",
             "",
             "/**",
             " * The type returned by the query hook for every fetch policy other",
@@ -44,14 +44,14 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
             " * errored) there is no result to show yet. The last element is a",
             " * function to manually call the API.",
             " */",
-            "type QueryResult<Data> =",
+            "type QueryResult$<Data> =",
             "  | readonly [true, null, null, () => Promise<Data>]",
-            "  | readonly [false, Error, null, () => Promise<Data>]",
+            "  | readonly [false, Error$, null, () => Promise<Data>]",
             "  | readonly [false, null, Data, () => Promise<Data>];",
             "",
             "/**",
             " * The type returned by the query hook when using the",
-            " * `cache-and-network` fetch policy. It differs from `QueryResult` in",
+            " * `cache-and-network` fetch policy. It differs from `QueryResult$` in",
             " * that `loading` and `error` can both be reported alongside a",
             " * `data` value: a cache hit delivers `data` immediately while the",
             " * network request keeps `loading`, and a failed refetch keeps the",
@@ -59,9 +59,9 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
             " * can use the presence of `data` for stale-while-revalidate instead",
             " * of forcing a skeleton on every refetch.",
             " */",
-            "type CacheAndNetworkQueryResult<Data> =",
+            "type CacheAndNetworkQueryResult$<Data> =",
             "  | readonly [true, null, Data | null, () => Promise<Data>]",
-            "  | readonly [false, Error, Data | null, () => Promise<Data>]",
+            "  | readonly [false, Error$, Data | null, () => Promise<Data>]",
             "  | readonly [false, null, Data, () => Promise<Data>];",
           ]
         : [],
@@ -77,7 +77,7 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
             " * available as the last element of the array, it can also be accessed",
             " * from the promise returned by the call function.",
             " */",
-            "type MutationResult<Payload, Data> =",
+            "type MutationResult$<Payload, Data> =",
             "  /**",
             "   * If the call hasn't been sent yet, or if it is running, then",
             "   * it returns a simple array, with a boolean indicating the",
@@ -90,7 +90,7 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
             "   * loading variable, then the error that happened, and finally",
             "   * `null` for the result.",
             "   */",
-            "  | [(payload: Payload) => Promise<Data>, false, Error, null]",
+            "  | [(payload: Payload) => Promise<Data>, false, Error$, null]",
             "  /**",
             "   * If the call has come through, the array contains `false` as the",
             "   * loading variable, `null` for the error, and finally the data",
@@ -153,7 +153,7 @@ export const queryArgsToTypes = (
 
 export const fieldsToQuery = () =>
   [
-    "const fieldsToQuery = (query: Fields, path: Array<string> = []): string => {",
+    "const fieldsToQuery = (query: Fields$, path: Array<string> = []): string => {",
     "    if (query === null) {",
     "        return '';",
     "    }",
@@ -165,11 +165,11 @@ export const fieldsToQuery = () =>
     "      .map((field) => {",
     "        if ('$on' in field && field.$on) {",
     "          return Object.entries(field.$on)",
-    "            .map(([type, selection]) => `... on ${type} ${fieldsToQuery(selection as Fields, path)}`)",
+    "            .map(([type, selection]) => `... on ${type} ${fieldsToQuery(selection as Fields$, path)}`)",
     "            .join('\\n');",
     "        }",
     "",
-    "        const key = Object.keys(field).filter((k) => k !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args' | '$on'>;",
+    "        const key = Object.keys(field).filter((k) => k !== '$args')[0] as Exclude<KeysOfUnion$<Exclude<Query, string>>, '$args' | '$on'>;",
     "",
     "        let queryField = key",
     "",
@@ -182,7 +182,7 @@ export const fieldsToQuery = () =>
     "            .join('\\n')})`;",
     "        }",
     "",
-    "        queryField += ` ${fieldsToQuery((field as MergedUnion<typeof field>)[key], path.concat(key))}`",
+    "        queryField += ` ${fieldsToQuery((field as MergedUnion$<typeof field>)[key], path.concat(key))}`",
     "",
     "        return queryField;",
     "      })",
@@ -192,7 +192,7 @@ export const fieldsToQuery = () =>
 
 export const resultsToArgs = () =>
   [
-    "const resultsToArgs = (query: keyof typeof queryToGqlTypes, returns: Fields, path: Array<string> = []): string =>",
+    "const resultsToArgs = (query: keyof typeof queryToGqlTypes, returns: Fields$, path: Array<string> = []): string =>",
     "  returns",
     "    ? (",
     "        returns.filter((field) => typeof field !== 'string') as Array<",
@@ -202,14 +202,14 @@ export const resultsToArgs = () =>
     "        .map((field) => {",
     "          if ('$on' in field && field.$on) {",
     "            return Object.entries(field.$on)",
-    "              .map(([type, selection]) => resultsToArgs(`${type}Query` as keyof typeof queryToGqlTypes, selection as Fields, path))",
+    "              .map(([type, selection]) => resultsToArgs(`${type}Query` as keyof typeof queryToGqlTypes, selection as Fields$, path))",
     "              .join('\\n');",
     "          }",
     "",
-    "          const key = Object.keys(field).filter((k) => k !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args' | '$on'>;",
+    "          const key = Object.keys(field).filter((k) => k !== '$args')[0] as Exclude<KeysOfUnion$<Exclude<Query, string>>, '$args' | '$on'>;",
     "",
     "          const queryTypes = queryToGqlTypes[query];",
-    "          const types = (queryTypes as MergedUnion<typeof queryTypes>)[key];",
+    "          const types = (queryTypes as MergedUnion$<typeof queryTypes>)[key];",
     "",
     "          let args = '';",
     "          if ('$args' in field && field.$args && '$args' in types) {",
@@ -221,7 +221,7 @@ export const resultsToArgs = () =>
     "              .join('\\n');",
     "          }",
     "",
-    "          args += resultsToArgs(types.query, (field as MergedUnion<typeof field>)[key], path.concat(key))",
+    "          args += resultsToArgs(types.query, (field as MergedUnion$<typeof field>)[key], path.concat(key))",
     "",
     "          return args;",
     "        })",
@@ -231,7 +231,7 @@ export const resultsToArgs = () =>
 
 export const argsToGql = () =>
   [
-    "const argsToGql = (argTypes: ArgumentTypes, args: Record<string, Arguments>, query: keyof typeof queryToGqlTypes | null, returns: Fields | null) =>",
+    "const argsToGql = (argTypes: ArgumentTypes$, args: Record<string, Arguments$>, query: keyof typeof queryToGqlTypes | null, returns: Fields$ | null) =>",
     "  Object.keys(args)",
     "    .map((key) => `$${key}: ${argTypes[key]}`)",
     "    .concat(query && returns ? resultsToArgs(query, returns) : [])",
@@ -240,7 +240,7 @@ export const argsToGql = () =>
 
 export const variablesToArgs = () =>
   [
-    "const variablesToArgs = (args: Record<string, Arguments>) =>",
+    "const variablesToArgs = (args: Record<string, Arguments$>) =>",
     "  Object.keys(args)",
     "    .map((key) => `${key}: $${key}`)",
     "    .join(', ');",
@@ -248,7 +248,7 @@ export const variablesToArgs = () =>
 
 export const returnsToVariables = () =>
   [
-    "const returnsToVariables = (returns: Fields, path: Array<string> = []): Record<string, Arguments> =>",
+    "const returnsToVariables = (returns: Fields$, path: Array<string> = []): Record<string, Arguments$> =>",
     "  returns",
     "    ? Object.assign({}, ...(",
     "        returns.filter((field) => typeof field !== 'string') as Array<",
@@ -257,12 +257,12 @@ export const returnsToVariables = () =>
     "      )",
     "        .map((field) => {",
     "          if ('$on' in field && field.$on) {",
-    "            return Object.assign({}, ...Object.values(field.$on).map((selection) => returnsToVariables(selection as Fields, path)));",
+    "            return Object.assign({}, ...Object.values(field.$on).map((selection) => returnsToVariables(selection as Fields$, path)));",
     "          }",
     "",
-    "          const key = Object.keys(field).filter((k) => k !== '$args')[0] as Exclude<KeysOfUnion<Exclude<Query, string>>, '$args' | '$on'>;",
+    "          const key = Object.keys(field).filter((k) => k !== '$args')[0] as Exclude<KeysOfUnion$<Exclude<Query, string>>, '$args' | '$on'>;",
     "",
-    "          let args: Record<string, Arguments> = {};",
+    "          let args: Record<string, Arguments$> = {};",
     "          if ('$args' in field && field.$args) {",
     "            args = Object.fromEntries(Object.entries(field.$args)",
     "              .map(",
@@ -271,7 +271,7 @@ export const returnsToVariables = () =>
     "              ));",
     "          }",
     "",
-    "          args = {...args, ...returnsToVariables((field as MergedUnion<typeof field>)[key], path.concat(key))}",
+    "          args = {...args, ...returnsToVariables((field as MergedUnion$<typeof field>)[key], path.concat(key))}",
     "",
     "          return args;",
     "        }))",
