@@ -1,7 +1,11 @@
 import ts from "typescript";
 import { readFileSync } from "node:fs";
 import { dirname, relative, resolve } from "node:path";
-import { ImportBinding, ScalarTypeInfo } from "../types.ts";
+import {
+  ImportBinding,
+  LocalTypeDeclaration,
+  ScalarTypeInfo,
+} from "../types.ts";
 
 const importBindings = (source: ts.SourceFile): Map<string, ImportBinding> => {
   const bindings = new Map<string, ImportBinding>();
@@ -64,6 +68,32 @@ const scalarsObjectLiteral = (
   return scalars;
 };
 
+// Top-level `type`/`interface` declarations in the config file. A scalar's
+// TS type doesn't have to be imported - it can be declared right there in
+// enodia.config.ts, in which case there's no import to copy and we have to
+// copy the declaration itself into the generated file instead.
+const localTypeDeclarations = (
+  source: ts.SourceFile,
+): Map<string, { name: string; text: string; node: ts.Node }> => {
+  const declarations = new Map<
+    string,
+    { name: string; text: string; node: ts.Node }
+  >();
+  for (const statement of source.statements) {
+    if (
+      ts.isTypeAliasDeclaration(statement) ||
+      ts.isInterfaceDeclaration(statement)
+    ) {
+      declarations.set(statement.name.text, {
+        name: statement.name.text,
+        text: statement.getText(source),
+        node: statement,
+      });
+    }
+  }
+  return declarations;
+};
+
 const isDeclarationOrPropertyName = (identifier: ts.Identifier): boolean => {
   const parent = identifier.parent;
   return (
@@ -110,6 +140,38 @@ const namesUsedButNotDefined = (node: ts.Node): Array<string> => {
   return [...used].filter((id) => !parameters.has(id) && !locals.has(id));
 };
 
+// A local declaration can itself reference other local declarations (e.g. a
+// recursive `Json` type, or a `JsonObject` type built out of `Json`), so we
+// have to follow those references transitively to copy every declaration
+// the generated file will need.
+const localTypeClosure = (
+  startNames: Array<string>,
+  declarations: Map<string, { name: string; text: string; node: ts.Node }>,
+): Array<LocalTypeDeclaration> => {
+  const visited = new Map<string, LocalTypeDeclaration>();
+  const frontier = [...startNames];
+
+  while (frontier.length > 0) {
+    const name = frontier.pop()!;
+    if (visited.has(name)) {
+      continue;
+    }
+    const declaration = declarations.get(name);
+    if (!declaration) {
+      continue;
+    }
+
+    visited.set(name, { name: declaration.name, text: declaration.text });
+
+    const body = ts.isTypeAliasDeclaration(declaration.node)
+      ? declaration.node.type
+      : declaration.node;
+    frontier.push(...namesUsedButNotDefined(body));
+  }
+
+  return [...visited.values()];
+};
+
 const codecFunction = (
   codec: ts.Expression | undefined,
   which: "encode" | "decode",
@@ -145,6 +207,7 @@ export const extractScalarTypes = (
   }
 
   const bindings = importBindings(source);
+  const declarations = localTypeDeclarations(source);
   const scalarTypes: Record<string, ScalarTypeInfo> = {};
 
   for (const property of scalars.properties) {
@@ -162,6 +225,7 @@ export const extractScalarTypes = (
     const decode = codecFunction(call.arguments[0], "decode", source);
 
     const imports = new Map<string, ImportBinding>();
+    const localTypeNames = new Set<string>();
     for (const node of [typeNode, encode, decode]) {
       if (!node) {
         continue;
@@ -170,6 +234,8 @@ export const extractScalarTypes = (
         const binding = bindings.get(referenced);
         if (binding) {
           imports.set(`${binding.specifier}#${binding.name}`, binding);
+        } else if (declarations.has(referenced)) {
+          localTypeNames.add(referenced);
         }
       }
     }
@@ -179,6 +245,7 @@ export const extractScalarTypes = (
       ...(encode ? { encode: encode.getText(source) } : {}),
       ...(decode ? { decode: decode.getText(source) } : {}),
       imports: [...imports.values()],
+      localTypes: localTypeClosure([...localTypeNames], declarations),
     };
   }
 
@@ -226,7 +293,7 @@ export const renderScalarImports = (
     }
   }
 
-  return [...groups.entries()]
+  const importLines = [...groups.entries()]
     .flatMap(([key, { named, defaults }]) => {
       const [typeOnly, specifier] = key.split("\n");
       const keyword = typeOnly === "true" ? "import type" : "import";
@@ -240,4 +307,20 @@ export const renderScalarImports = (
       ].filter((line): line is string => line !== null);
     })
     .join("\n");
+
+  // Deduped by name, since more than one scalar can reference the same
+  // locally-declared type (e.g. a `Json` type used by both a `JSON` and a
+  // `JSONObject` scalar).
+  const localTypes = new Map<string, string>();
+  for (const { localTypes: types = [] } of Object.values(scalarTypes)) {
+    for (const { name, text } of types) {
+      if (!localTypes.has(name)) {
+        localTypes.set(name, text);
+      }
+    }
+  }
+
+  return [importLines, [...localTypes.values()].join("\n\n")]
+    .filter(Boolean)
+    .join("\n\n");
 };

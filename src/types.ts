@@ -20,9 +20,15 @@ export type ImportBinding = {
   typeOnly: boolean;
 };
 
+export type LocalTypeDeclaration = {
+  name: string;
+  text: string;
+};
+
 export type ScalarTypeInfo = {
   type: string;
   encode?: string;
   decode?: string;
   imports: Array<ImportBinding>;
+  localTypes?: Array<LocalTypeDeclaration>;
 };
