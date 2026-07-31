@@ -129,10 +129,28 @@ const [loading, error, user] = useUserQuery(
 );
 ```
 
+`loading` is `true` whenever a request for the current query/args is in flight,
+including on refetches triggered by a query or args change (e.g. paginating by
+changing `offset`) — not just on the very first request. For every fetch policy
+except `cache-and-network`, `loading` stays mutually exclusive with the result:
+`data` is `null` for the whole in-flight (or errored) period, exactly like
+before, so `const [loading, error, user] = useUserQuery(...)` narrows `user` to
+`null` whenever `loading` or `error` is set.
+
 Hooks additionally support `cache-and-network`: the hook shows cached data
 immediately (if any) and then refetches from the network, updating when the
-response arrives. This policy only exists on the hooks — the plain client's
-`call` resolves a single promise, so it has no way to emit twice.
+response arrives. A cache hit resolves `loading` to `false` right away — no
+skeleton flash for an already-cached key — while a cache miss keeps `loading`
+`true` until the network request settles. Because the whole point of this policy
+is to keep showing the previous result while revalidating, its hooks return a
+different, slightly looser shape: `data` can be non-`null` at the same time as
+`loading` or `error`, so consumers can choose stale-while- revalidate over a
+skeleton. TypeScript picks the right shape for you based on the `fetchPolicy`
+you pass — pass `fetchPolicy: "cache-and-network"` and `user` above is typed
+`{ name: string } | null` even while `loading` is `true`; omit it (or pass
+anything else) and `user` stays `null` in that case. This policy only exists on
+the hooks — the plain client's `call` resolves a single promise, so it has no
+way to emit twice.
 
 #### Unions
 
