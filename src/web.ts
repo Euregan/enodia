@@ -302,7 +302,9 @@ const queryFunctionParameters = (
   withArgs = true,
 ) =>
   [
-    !isScalar(field.type, scalars) ? "query: Array<T>" : null,
+    !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+      ? "query: Array<T>"
+      : null,
     withArgs && field.arguments && field.arguments.length > 0
       ? `args${
           field.arguments.every((arg) => isGqlTypeOptional(arg.type)) ? "?" : ""
@@ -333,7 +335,7 @@ const queryOrMutationFunctions = (
     .map((field) =>
       [
         `    ${field.name.value}: ${
-          isScalar(field.type, scalars)
+          isScalar(field.type, scalars) || isEnum(field.type, enums)
             ? ""
             : `<T extends ${gqlTypeToTsName(
                 field.type,
@@ -349,7 +351,9 @@ const queryOrMutationFunctions = (
           scalars,
           enums,
         )}> => call(graphqlServerUrl, '${field.name.value}', ${
-          !isScalar(field.type, scalars) ? "query" : "null"
+          !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+            ? "query"
+            : "null"
         }${
           field.arguments && field.arguments.length > 0
             ? `, args, { ${gqlArgTypes(field.arguments)} }`
@@ -414,7 +418,7 @@ const react = (
         !isScalar(field.type, scalars) && !isEnum(field.type, enums);
       const hasArgs = !!(field.arguments && field.arguments.length > 0);
       const callPrefix = `call('${url}', '${name}', ${
-        !isScalar(field.type, scalars) ? "query" : "null"
+        usesQuerySelection ? "query" : "null"
       }${
         field.arguments && field.arguments.length > 0
           ? `, args, { ${gqlArgTypes(field.arguments)} }`
@@ -546,7 +550,9 @@ const react = (
               : ""
           }(`,
           `  ${queryFunctionParameters(field, scalars, enums, false)}${
-            !isScalar(field.type, scalars) ? ", " : ""
+            !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+              ? ", "
+              : ""
           }callbacks: Array<(data: ${
             !isScalar(field.type, scalars) && !isEnum(field.type, enums)
               ? "T"
@@ -578,7 +584,9 @@ const react = (
           "    setLoading(true);",
           "",
           `    return call('${url}', '${field.name.value}', ${
-            !isScalar(field.type, scalars) ? "query" : "null"
+            !isScalar(field.type, scalars) && !isEnum(field.type, enums)
+              ? "query"
+              : "null"
           }${
             field.arguments && field.arguments.length > 0
               ? `, args, { ${gqlArgTypes(field.arguments)} }`
