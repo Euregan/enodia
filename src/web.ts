@@ -300,6 +300,7 @@ const queryFunctionParameters = (
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
   withArgs = true,
+  requireArgs = false,
 ) =>
   [
     !isScalar(field.type, scalars) && !isEnum(field.type, enums)
@@ -307,7 +308,10 @@ const queryFunctionParameters = (
       : null,
     withArgs && field.arguments && field.arguments.length > 0
       ? `args${
-          field.arguments.every((arg) => isGqlTypeOptional(arg.type)) ? "?" : ""
+          !requireArgs &&
+          field.arguments.every((arg) => isGqlTypeOptional(arg.type))
+            ? "?"
+            : ""
         }: { ${field.arguments
           .map(
             (arg) =>
@@ -443,6 +447,16 @@ const react = (
       const params = `${queryFunctionParameters(field, scalars, enums)}${
         usesQuerySelection || hasArgs ? ", " : ""
       }`;
+      // This overload's `options` is required (it pins `fetchPolicy` to the
+      // 'cache-and-network' literal), so `args` can't be optional here even
+      // when every arg field is - a required parameter can't follow one.
+      const paramsWithRequiredArgs = `${queryFunctionParameters(
+        field,
+        scalars,
+        enums,
+        true,
+        true,
+      )}${usesQuerySelection || hasArgs ? ", " : ""}`;
       // Reset `data` on a new request unless the policy is `cache-and-network`,
       // whose whole point is to keep showing the last result while revalidating.
       const nextData =
@@ -453,7 +467,7 @@ const react = (
         // every other policy keeps them mutually exclusive. Overloads let callers get the
         // right shape back based on the `fetchPolicy` they actually pass.
         `export function use${capitalizedName}Query${generic}(`,
-        `  ${params}options: { skip?: boolean; fetchPolicy: 'cache-and-network' }`,
+        `  ${paramsWithRequiredArgs}options: { skip?: boolean; fetchPolicy: 'cache-and-network' }`,
         `): CacheAndNetworkQueryResult$<${dataType}>;`,
         `export function use${capitalizedName}Query${generic}(`,
         `  ${params}options?: { skip?: boolean; fetchPolicy?: Exclude<HookFetchPolicy$, 'cache-and-network'> }`,

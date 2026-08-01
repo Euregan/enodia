@@ -312,3 +312,66 @@ test("schema types colliding with reserved generator names typecheck cleanly", a
 
   expect(errors).toHaveLength(0);
 });
+
+test("enum-returning fields with only-optional args typecheck cleanly", async () => {
+  const client = schemaToWeb(
+    gql`
+      enum Entitlement {
+        ADMIN
+        MEMBER
+      }
+
+      type Organisation {
+        id: ID!
+        name: String!
+        parent: Organisation
+      }
+
+      type Query {
+        organisation(id: ID!): Organisation
+        getOrgAdminEntitlementsForUser(
+          userId: ID!
+          accountId: String
+        ): [Entitlement!]!
+        getInvitationExpiration(invitationToken: String): Entitlement
+      }
+
+      type Mutation {
+        addOrganisationEntitlement(
+          orgId: ID!
+          entitlements: [Entitlement!]!
+        ): [Entitlement!]!
+      }
+    `,
+    {
+      scalarTypes: {},
+      scalarImports: "",
+      withReact: { url: "http://localhost:3000/graphql" },
+    },
+  );
+
+  await fs.mkdir("./generated-tests-files", { recursive: true });
+  await fs.writeFile("./generated-tests-files/enumOnlyOptionalArgs.ts", client);
+
+  const program = ts.createProgram({
+    options: {
+      noEmit: true,
+      strict: true,
+      noUnusedLocals: true,
+      noUnusedParameters: true,
+      noFallthroughCasesInSwitch: true,
+    },
+    rootNames: ["./generated-tests-files/enumOnlyOptionalArgs.ts"],
+  });
+
+  const errors = ts
+    .getPreEmitDiagnostics(program)
+    .concat(program.emit().diagnostics)
+    .map((error) => error.messageText);
+
+  if (errors.length > 0) {
+    console.log(errors);
+  }
+
+  expect(errors).toHaveLength(0);
+});
