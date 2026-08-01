@@ -375,3 +375,67 @@ test("enum-returning fields with only-optional args typecheck cleanly", async ()
 
   expect(errors).toHaveLength(0);
 });
+
+test("interface-typed fields with $on fragments typecheck cleanly", async () => {
+  const client = schemaToWeb(
+    gql`
+      interface EventGQL {
+        id: ID!
+        title: String!
+      }
+
+      type RegularEventGQL implements EventGQL {
+        id: ID!
+        title: String!
+        location: String!
+      }
+
+      type TrainingEventGQL implements EventGQL {
+        id: ID!
+        title: String!
+        trainer: String!
+      }
+
+      type Organisation {
+        id: ID!
+        name: String!
+        parent: Organisation
+      }
+
+      type Query {
+        event(id: ID!): EventGQL
+        organisation(id: ID!): Organisation
+      }
+    `,
+    {
+      scalarTypes: {},
+      scalarImports: "",
+      withReact: { url: "http://localhost:3000/graphql" },
+    },
+  );
+
+  await fs.mkdir("./generated-tests-files", { recursive: true });
+  await fs.writeFile("./generated-tests-files/interfaceTypes.ts", client);
+
+  const program = ts.createProgram({
+    options: {
+      noEmit: true,
+      strict: true,
+      noUnusedLocals: true,
+      noUnusedParameters: true,
+      noFallthroughCasesInSwitch: true,
+    },
+    rootNames: ["./generated-tests-files/interfaceTypes.ts"],
+  });
+
+  const errors = ts
+    .getPreEmitDiagnostics(program)
+    .concat(program.emit().diagnostics)
+    .map((error) => error.messageText);
+
+  if (errors.length > 0) {
+    console.log(errors);
+  }
+
+  expect(errors).toHaveLength(0);
+});

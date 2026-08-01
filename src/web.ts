@@ -129,11 +129,24 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "const normalize = (query: keyof typeof queryToGqlTypes, returns: Fields$, data: any): any => {",
     "  if (data === null || data === undefined) return data ?? null;",
     "  const record: Record<string, any> = {};",
+    // Interface fields (unlike unions) can select their own fields alongside
+    // `$on`, so those shared field names are folded into the member's own
+    // selection below - keeping the whole entity in one `normalize` call
+    // instead of losing the shared fields to a separate, discarded record.
+    // Typed `any[]` (rather than `Array<string>`) so spreading it together
+    // with `selection` below infers as a plain `any[]`: spelling out the
+    // precise union against a schema's full `Query` type can make that
+    // spread's literal type too large for TS to represent.
+    "  const ownFields = (returns ?? []).filter((field) => typeof field === 'string') as Array<any>;",
     "  for (const field of returns ?? []) {",
     "    if (typeof field === 'string') { record[field] = data[field]; continue; }",
     "    if ('$on' in field && field.$on) {",
     "      const selection = (field.$on as Record<string, Fields$>)[data.__typename];",
-    "      if (selection) return normalize(`${data.__typename}Query` as keyof typeof queryToGqlTypes, selection, data);",
+    "      if (selection) {",
+    "        const member = normalize(`${data.__typename}Query` as keyof typeof queryToGqlTypes, [...ownFields, ...selection] as Fields$, data);",
+    "        if (member && typeof member === 'object' && '__ref' in member) return member;",
+    "        Object.assign(record, member);",
+    "      }",
     "      continue;",
     "    }",
     "    const key = Object.keys(field).filter((k) => k !== '$args')[0] as string;",

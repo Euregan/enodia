@@ -4,6 +4,7 @@ import {
   FieldDefinitionNode,
   InputObjectTypeDefinitionNode,
   InputValueDefinitionNode,
+  InterfaceTypeDefinitionNode,
   Kind,
   ObjectTypeDefinitionNode,
   ScalarTypeDefinitionNode,
@@ -224,6 +225,22 @@ export const getObjectTypes = (
       !isEnum(node, enums),
   ) as Array<ObjectTypeDefinitionNode>;
 
+export const getInterfaces = (schema: DocumentNode) =>
+  schema.definitions.filter(
+    (node) => node.kind === Kind.INTERFACE_TYPE_DEFINITION,
+  ) as Array<InterfaceTypeDefinitionNode>;
+
+// The concrete object types a `... on Member` fragment ($on) can select on
+// for a given interface, i.e. the types declaring `implements InterfaceName`.
+const implementersOf = (
+  schema: DocumentNode,
+  enums: Array<EnumTypeDefinitionNode>,
+  interfaceName: string,
+) =>
+  getObjectTypes(schema, enums).filter((node) =>
+    (node.interfaces || []).some((i) => i.name.value === interfaceName),
+  );
+
 export const getInputTypes = (schema: DocumentNode) =>
   schema.definitions.filter(
     (node) => node.kind === Kind.INPUT_OBJECT_TYPE_DEFINITION,
@@ -288,6 +305,9 @@ export const types = (
       ),
     )
     .concat(unions.map((node) => `  | ${node.name.value}Query[number]`))
+    .concat(
+      getInterfaces(schema).map((node) => `  | ${node.name.value}Query[number]`),
+    )
     .concat([
       ">;",
       "",
@@ -332,12 +352,35 @@ const fieldQuery = (
           : ""
       } }`;
 
+// The `[P in T extends string ? T : keyof T]: ...` branches shared by object
+// and interface `Result$` types: one ternary per non-scalar/enum field,
+// resolving to that field's own `Result$`.
+const resultFieldBranches = (
+  fields: ReadonlyArray<FieldDefinitionNode>,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>,
+) =>
+  fields
+    .filter((field) => !isScalar(field.type, scalars) && !isEnum(field.type, enums))
+    .map(
+      (field) =>
+        `    P extends '${field.name.value}' ? T extends { ${
+          field.name.value
+        }: ${gqlTypeToTsName(field.type, scalars, enums)}Query } ? ${
+          isListType(field.type) ? "Array<" : ""
+        }${gqlTypeToTsName(field.type, scalars, enums)}Result$<T['${
+          field.name.value
+        }'][number]>${isListType(field.type) ? ">" : ""} : never :`,
+    );
+
 export const queriesTypes = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
   unions: Array<UnionTypeDefinitionNode>,
 ) => {
+  const interfaces = getInterfaces(schema);
+
   const queries = (
     schema.definitions.filter(
       (node) =>
@@ -389,39 +432,95 @@ export const queriesTypes = (
         `type ${node.name.value}Result$<T extends ${node.name.value}Query[number]> = Prettify$<Omit<{`,
         "  [P in T extends string ? T : keyof T]:",
       ]
-        .concat(
-          (node.fields || [])
-            .filter(
-              (field) =>
-                !isScalar(field.type, scalars) && !isEnum(field.type, enums),
-            )
-            .map(
-              (field) =>
-                `    P extends '${field.name.value}' ? T extends { ${
-                  field.name.value
-                }: ${gqlTypeToTsName(field.type, scalars, enums)}Query } ? ${
-                  field.type.kind === Kind.LIST_TYPE ||
-                  (field.type.kind === Kind.NON_NULL_TYPE &&
-                    field.type.type.kind === Kind.LIST_TYPE)
-                    ? "Array<"
-                    : ""
-                }${gqlTypeToTsName(field.type, scalars, enums)}Result$<T['${
-                  field.name.value
-                }'][number]>${
-                  field.type.kind === Kind.LIST_TYPE ||
-                  (field.type.kind === Kind.NON_NULL_TYPE &&
-                    field.type.type.kind === Kind.LIST_TYPE)
-                    ? ">"
-                    : ""
-                } : never :`,
-            ),
-        )
+        .concat(resultFieldBranches(node.fields || [], scalars, enums))
         .concat([
           `    P extends keyof ${node.name.value} ? ${node.name.value}[P] : never`,
           "}, '$args'>>;",
         ])
         .join("\n"),
     )
+    .join("\n\n");
+
+  // An interface field is queried like an object (its own fields, directly),
+  // plus one extra `$on` entry for `... on Member` fragments - same shape
+  // unions already use for their (fields-less) `$on`-only selections.
+  const interfaceQueries = interfaces
+    .map((node) => {
+      const members = implementersOf(schema, enums, node.name.value);
+      return [`export type ${node.name.value}Query = Array<`]
+        .concat(
+          (node.fields || []).map(
+            (field) => `  | ${fieldQuery(field, scalars, enums)}`,
+          ),
+        )
+        .concat(
+          members.length > 0
+            ? [
+                `  | { $on: { ${members
+                  .map(
+                    (member) => `${member.name.value}?: ${member.name.value}Query`,
+                  )
+                  .join(", ")} } }`,
+              ]
+            : [],
+        )
+        .concat([">;"])
+        .join("\n");
+    })
+    .join("\n\n");
+
+  const interfaceTypes = interfaces
+    .map((node) =>
+      [`type ${node.name.value} = {`]
+        .concat(
+          (node.fields || []).map(
+            (field) =>
+              `  ${field.name.value}: ${gqlTypeToTsString(
+                {
+                  type: field.type,
+                  scalars,
+                  enums,
+                },
+                { optionalAsUndefined: false },
+              )}${field.type.kind !== Kind.NON_NULL_TYPE ? " | null" : ""}`,
+          ),
+        )
+        .concat(["};"])
+        .join("\n"),
+    )
+    .join("\n\n");
+
+  // The own fields resolve exactly like an object's `Result$`; a selected
+  // `$on` fragment additionally merges in whichever member was requested
+  // (same per-member conditional as `unionResults`, guarded so omitting
+  // `$on` entirely still resolves to just the own-fields shape).
+  const interfaceResults = interfaces
+    .map((node) => {
+      const members = implementersOf(schema, enums, node.name.value);
+      return (
+        [
+          `type ${node.name.value}Result$<T extends ${node.name.value}Query[number]> = Prettify$<Omit<{`,
+          "  [P in T extends string ? T : keyof T]:",
+        ]
+          .concat(resultFieldBranches(node.fields || [], scalars, enums))
+          .concat([
+            `    P extends keyof ${node.name.value} ? ${node.name.value}[P] : never`,
+            members.length > 0
+              ? "}, '$args' | '$on'>> & (T extends { $on: unknown } ? ("
+              : "}, '$args'>>;",
+          ])
+          .concat(
+            members.length > 0
+              ? members.map(
+                  (member) =>
+                    `  | (T extends { $on: { ${member.name.value}: Array<infer Q extends ${member.name.value}Query[number]> } } ? Prettify$<${member.name.value}Result$<Q>> : never)`,
+                )
+              : [],
+          )
+          .concat(members.length > 0 ? [") : {});"] : [])
+          .join("\n")
+      );
+    })
     .join("\n\n");
 
   const inputs = (
@@ -501,10 +600,13 @@ export const queriesTypes = (
   return [
     queries,
     unionQueries,
+    interfaceQueries,
     types,
     unionTypes,
+    interfaceTypes,
     results,
     unionResults,
+    interfaceResults,
     inputs,
     enumerations,
   ]

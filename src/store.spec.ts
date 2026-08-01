@@ -45,6 +45,15 @@ const respond = (operation: string, variables: Record<string, string>) => {
           email: "a1@x",
         },
       };
+    case "event":
+      return {
+        event: {
+          __typename: "TrainingEventGQL",
+          id: "e1",
+          title: "Onboarding",
+          trainer: "Bob",
+        },
+      };
     default:
       throw new Error("unexpected operation " + operation);
   }
@@ -74,11 +83,26 @@ const setup = async () => {
         postedAt: Date!
       }
       union Feed = Post | Comment
+      interface EventGQL {
+        id: ID!
+        title: String!
+      }
+      type RegularEventGQL implements EventGQL {
+        id: ID!
+        title: String!
+        location: String!
+      }
+      type TrainingEventGQL implements EventGQL {
+        id: ID!
+        title: String!
+        trainer: String!
+      }
       type Query {
         user(id: ID!): User
         users: [User]!
         userCount: Int!
         feed: [Feed!]!
+        event(id: ID!): EventGQL
       }
       type Mutation {
         createUser(name: String!, email: String!): User!
@@ -243,6 +267,34 @@ test("caches null results", async () => {
 
   expect(await client.query.user(["name"], { id: "missing" })).toBeNull();
   expect(await client.query.user(["name"], { id: "missing" })).toBeNull();
+  expect(state.calls).toBe(1);
+});
+
+test("interface fields merge shared fields with the matched $on fragment", async () => {
+  const { makeClient, state } = await setup();
+  const client = makeClient();
+
+  const selection = [
+    "title",
+    {
+      $on: {
+        TrainingEventGQL: ["trainer"],
+        RegularEventGQL: ["location"],
+      },
+    },
+  ] as const;
+
+  // The shared `title` field must survive alongside the type-specific
+  // `trainer` field matched by `$on` via `__typename`, not just one or the
+  // other.
+  expect(await client.query.event(selection, { id: "e1" })).toEqual({
+    title: "Onboarding",
+    trainer: "Bob",
+  });
+  expect(state.calls).toBe(1);
+
+  // Both were merged onto the same TrainingEventGQL:e1 entity, so this is a hit.
+  await client.query.event(selection, { id: "e1" });
   expect(state.calls).toBe(1);
 });
 

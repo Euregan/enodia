@@ -1,11 +1,13 @@
 import {
   DocumentNode,
   EnumTypeDefinitionNode,
+  FieldDefinitionNode,
   Kind,
   ObjectTypeDefinitionNode,
   UnionTypeDefinitionNode,
 } from "graphql";
 import {
+  getInterfaces,
   getMutations,
   getQueries,
   gqlTypeToGqlString,
@@ -102,6 +104,35 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
     )
     .join("\n");
 
+const queryToGqlTypesEntry = (
+  node: { name: { value: string }; fields?: ReadonlyArray<FieldDefinitionNode> },
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>,
+) =>
+  `  ${node.name.value}Query: { ${(node.fields || [])
+    .filter((field) => !isEnum(field.type, enums) && !isScalar(field.type, scalars))
+    .map(
+      (field) =>
+        `${field.name.value}: { query: '${gqlTypeToTsName(
+          field.type,
+          scalars,
+          enums,
+          "Query",
+        )}' as const${
+          (field.arguments || []).length > 0
+            ? `, $args: { ${(field.arguments || [])
+                .map(
+                  (argument) =>
+                    `${argument.name.value}: '${gqlTypeToGqlString(
+                      argument.type,
+                    )}' as const`,
+                )
+                .join(", ")}}`
+            : ""
+        } }`,
+    )
+    .join(", ")} },`;
+
 export const queryArgsToTypes = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
@@ -117,34 +148,13 @@ export const queryArgsToTypes = (
             // We don't expose these types
             !["Query", "Mutation"].includes(node.name.value),
         ) as Array<ObjectTypeDefinitionNode>
-      ).map(
-        (node) =>
-          `  ${node.name.value}Query: { ${(node.fields || [])
-            .filter(
-              (field) =>
-                !isEnum(field.type, enums) && !isScalar(field.type, scalars),
-            )
-            .map(
-              (field) =>
-                `${field.name.value}: { query: '${gqlTypeToTsName(
-                  field.type,
-                  scalars,
-                  enums,
-                  "Query",
-                )}' as const${
-                  (field.arguments || []).length > 0
-                    ? `, $args: { ${(field.arguments || [])
-                        .map(
-                          (argument) =>
-                            `${argument.name.value}: '${gqlTypeToGqlString(
-                              argument.type,
-                            )}' as const`,
-                        )
-                        .join(", ")}}`
-                    : ""
-                } }`,
-            )
-            .join(", ")} },`,
+      ).map((node) => queryToGqlTypesEntry(node, scalars, enums)),
+    )
+    // An interface's own fields are directly selectable (like an object's),
+    // unlike a union which only ever exposes its members through `$on`.
+    .concat(
+      getInterfaces(schema).map((node) =>
+        queryToGqlTypesEntry(node, scalars, enums),
       ),
     )
     .concat(unions.map((node) => `  ${node.name.value}Query: {},`))
