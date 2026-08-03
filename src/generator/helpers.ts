@@ -15,6 +15,22 @@ import { GqlScalarToTs, ScalarTypeInfo } from "../types.ts";
 
 // Helpers
 
+// Turns a GraphQL description into a JSDoc comment on the generated
+// declaration, so editors surface the schema's own docs while writing or
+// consuming generated code.
+export const jsDoc = (
+  description: string | null | undefined,
+  indent = "",
+): string => {
+  if (!description) return "";
+  const lines = description.split("\n");
+  return lines.length === 1
+    ? `${indent}/** ${lines[0]} */\n`
+    : `${indent}/**\n${lines
+        .map((line) => `${indent} * ${line}`)
+        .join("\n")}\n${indent} */\n`;
+};
+
 export const baseScalars: Array<GqlScalarToTs> = [
   { gql: "Int", ts: "number" },
   { gql: "Float", ts: "number" },
@@ -407,11 +423,11 @@ export const queriesTypes = (
 
   const types = getObjectTypes(schema, enums)
     .map((node) =>
-      [`type ${node.name.value} = {`]
+      [`${jsDoc(node.description?.value)}type ${node.name.value} = {`]
         .concat(
           (node.fields || []).map(
             (field) =>
-              `  ${field.name.value}: ${gqlTypeToTsString(
+              `${jsDoc(field.description?.value, "  ")}  ${field.name.value}: ${gqlTypeToTsString(
                 {
                   type: field.type,
                   scalars,
@@ -471,11 +487,11 @@ export const queriesTypes = (
 
   const interfaceTypes = interfaces
     .map((node) =>
-      [`type ${node.name.value} = {`]
+      [`${jsDoc(node.description?.value)}type ${node.name.value} = {`]
         .concat(
           (node.fields || []).map(
             (field) =>
-              `  ${field.name.value}: ${gqlTypeToTsString(
+              `${jsDoc(field.description?.value, "  ")}  ${field.name.value}: ${gqlTypeToTsString(
                 {
                   type: field.type,
                   scalars,
@@ -529,11 +545,11 @@ export const queriesTypes = (
     ) as Array<InputObjectTypeDefinitionNode>
   )
     .map((node) =>
-      [`export type ${node.name.value} = {`]
+      [`${jsDoc(node.description?.value)}export type ${node.name.value} = {`]
         .concat(
           (node.fields || []).map(
             (field) =>
-              `  ${field.name.value}${
+              `${jsDoc(field.description?.value, "  ")}  ${field.name.value}${
                 isGqlTypeOptional(field.type) ? "?" : ""
               }: ${gqlTypeToTsString(
                 { type: field.type, scalars, enums },
@@ -548,11 +564,11 @@ export const queriesTypes = (
 
   const enumerations = getEnums(schema)
     .map((node) =>
-      [`export type ${node.name.value} = `]
+      [`${jsDoc(node.description?.value)}export type ${node.name.value} = `]
         .concat(
           (node.values || []).map(
             (value, index, values) =>
-              `  | '${value.name.value}'${
+              `${jsDoc(value.description?.value, "  ")}  | '${value.name.value}'${
                 index === values.length - 1 ? ";" : ""
               }`,
           ),
@@ -575,7 +591,9 @@ export const queriesTypes = (
   const unionTypes = unions
     .map(
       (node) =>
-        `export type ${node.name.value} = ${(node.types || [])
+        `${jsDoc(node.description?.value)}export type ${node.name.value} = ${(
+          node.types || []
+        )
           .map((member) => member.name.value)
           .join(" | ")};`,
     )

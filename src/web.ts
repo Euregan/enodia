@@ -26,6 +26,7 @@ import {
   isGqlTypeOptional,
   isListType,
   isScalar,
+  jsDoc,
   queriesTypes,
   queryResult,
   resolveScalars,
@@ -351,7 +352,7 @@ const queryOrMutationFunctions = (
   (queries.fields || [])
     .map((field) =>
       [
-        `    ${field.name.value}: ${
+        `${jsDoc(field.description?.value, "    ")}    ${field.name.value}: ${
           isScalar(field.type, scalars) || isEnum(field.type, enums)
             ? ""
             : `<T extends ${gqlTypeToTsName(
@@ -479,10 +480,12 @@ const react = (
         // `cache-and-network` reports `data` alongside `loading`/`error` (stale-while-revalidate);
         // every other policy keeps them mutually exclusive. Overloads let callers get the
         // right shape back based on the `fetchPolicy` they actually pass.
-        `export function use${capitalizedName}Query${generic}(`,
+        // JSDoc is repeated on both overload signatures (not the implementation) since
+        // that's what TS surfaces on hover for whichever overload a call site matches.
+        `${jsDoc(field.description?.value)}export function use${capitalizedName}Query${generic}(`,
         `  ${paramsWithRequiredArgs}options: { skip?: boolean; fetchPolicy: 'cache-and-network' }`,
         `): CacheAndNetworkQueryResult$<${dataType}>;`,
-        `export function use${capitalizedName}Query${generic}(`,
+        `${jsDoc(field.description?.value)}export function use${capitalizedName}Query${generic}(`,
         `  ${params}options?: { skip?: boolean; fetchPolicy?: Exclude<HookFetchPolicy$, 'cache-and-network'> }`,
         `): QueryResult$<${dataType}>;`,
         `export function use${capitalizedName}Query${generic}(`,
@@ -569,7 +572,7 @@ const react = (
     .concat(
       (mutations?.fields || []).map((field) =>
         [
-          `export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
+          `${jsDoc(field.description?.value)}export const use${field.name.value[0].toUpperCase()}${field.name.value.slice(
             1,
           )}Mutation = ${
             !isScalar(field.type, scalars) && !isEnum(field.type, enums)

@@ -189,3 +189,64 @@ test("permissions enabled: Denied surfaces as a GraphQL error, Authorized passes
     user: { id: "u1", name: "Alice", posts: [{ title: "hello" }] },
   });
 });
+
+test("GraphQL descriptions become JSDoc comments on the generated resolver types", async () => {
+  const documentedSchema = gql`
+    """
+    A person who uses the app.
+    """
+    type User {
+      id: ID!
+      """
+      The user's display name.
+      """
+      name: String!
+      posts: [Post]!
+    }
+
+    type Post {
+      id: ID!
+      title: String!
+      author: User!
+    }
+
+    type Query {
+      """
+      Fetch a single user by id.
+      """
+      user(id: ID!): User
+      users: [User]!
+    }
+
+    type Mutation {
+      """
+      Delete a user by id.
+      """
+      deleteUser(id: ID!): User!
+    }
+  `;
+
+  const server = schemaToServer(documentedSchema, {
+    scalarTypes: {},
+    scalarImports: "",
+    permissions: false,
+  });
+
+  await fs.writeFile(
+    "./generated-tests-files/descriptions.server.ts",
+    server,
+  );
+
+  expect(server).toContain("/** A person who uses the app. */\ntype User = {");
+  expect(server).toContain(
+    "  /** The user's display name. */\n  name: string",
+  );
+  expect(server).toContain("/** Fetch a single user by id. */\n        user:");
+  expect(server).toContain(
+    "/** Delete a user by id. */\n        deleteUser:",
+  );
+
+  expect(
+    typecheck("./generated-tests-files/descriptions.server.ts"),
+  ).toHaveLength(0);
+});

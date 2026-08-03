@@ -20,6 +20,7 @@ import {
   isGqlTypeOptional,
   isScalar,
   isUnion,
+  jsDoc,
   queriesTypes,
   resolveScalars,
   types,
@@ -290,7 +291,7 @@ const queriesAndMutationsResolversType = (
           .concat(
             queries.fields.map(
               (field) =>
-                `        ${field.name.value}: (${queryFunctionParameters(
+                `${jsDoc(field.description?.value, "        ")}        ${field.name.value}: (${queryFunctionParameters(
                   field,
                   scalars,
                   enums,
@@ -323,7 +324,7 @@ const queriesAndMutationsResolversType = (
                 `DetailedResponse<${returnType}> | ${returnType}`,
                 permissions,
               );
-              return `        ${field.name.value}: (${queryFunctionParameters(
+              return `${jsDoc(field.description?.value, "        ")}        ${field.name.value}: (${queryFunctionParameters(
                 field,
                 scalars,
                 enums,

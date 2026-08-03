@@ -439,3 +439,125 @@ test("interface-typed fields with $on fragments typecheck cleanly", async () => 
 
   expect(errors).toHaveLength(0);
 });
+
+test("GraphQL descriptions become JSDoc comments on the generated declarations", async () => {
+  const client = schemaToWeb(
+    gql`
+      """
+      A person who uses the app.
+      """
+      type User {
+        id: ID!
+        """
+        The user's display name.
+        """
+        name: String!
+        posts: [Post]!
+      }
+
+      """
+      Input for creating a user.
+      """
+      input CreateUserInput {
+        """
+        The user's display name.
+        """
+        name: String!
+      }
+
+      """
+      The plan a user is on.
+      """
+      enum Plan {
+        """
+        Free tier.
+        """
+        FREE
+        PAID
+      }
+
+      type Post {
+        id: ID!
+      }
+
+      """
+      Something that can show up in a feed.
+      """
+      union Feed = User | Post
+
+      type Query {
+        """
+        Fetch a single user by id.
+        """
+        user(id: ID!): User
+        feed: [Feed!]!
+      }
+
+      type Mutation {
+        """
+        Create a new user.
+        """
+        createUser(input: CreateUserInput!): User!
+      }
+    `,
+    {
+      scalarTypes: {},
+      scalarImports: "",
+      withReact: { url: "http://localhost:3000/graphql" },
+    },
+  );
+
+  await fs.mkdir("./generated-tests-files", { recursive: true });
+  await fs.writeFile("./generated-tests-files/descriptions.ts", client);
+
+  expect(client).toContain(
+    "/** A person who uses the app. */\ntype User = {",
+  );
+  expect(client).toContain(
+    "  /** The user's display name. */\n  name: string",
+  );
+  // `id` carries no description in the schema, so it gets no comment.
+  expect(client).not.toContain("/** */\n  id");
+
+  expect(client).toContain(
+    "/** Input for creating a user. */\nexport type CreateUserInput = {",
+  );
+  expect(client).toContain(
+    "/** The plan a user is on. */\nexport type Plan = ",
+  );
+  expect(client).toContain("  /** Free tier. */\n  | 'FREE'");
+  expect(client).not.toContain("/** */\n  | 'PAID'");
+
+  expect(client).toContain(
+    "/** Something that can show up in a feed. */\nexport type Feed = ",
+  );
+
+  expect(client).toContain(
+    "/** Fetch a single user by id. */\n    user:",
+  );
+  expect(client).toContain(
+    "/** Create a new user. */\nexport const useCreateUserMutation",
+  );
+
+  const program = ts.createProgram({
+    options: {
+      noEmit: true,
+      strict: true,
+      noUnusedLocals: true,
+      noUnusedParameters: true,
+      noFallthroughCasesInSwitch: true,
+    },
+    rootNames: ["./generated-tests-files/descriptions.ts"],
+  });
+
+  const descriptionErrors = ts
+    .getPreEmitDiagnostics(program)
+    .concat(program.emit().diagnostics)
+    .map((error) => error.messageText);
+
+  if (descriptionErrors.length > 0) {
+    console.log(descriptionErrors);
+  }
+
+  expect(descriptionErrors).toHaveLength(0);
+});
