@@ -29,6 +29,9 @@ import {
 
 const toReturn = (type: string) => `${type} | Promise<${type}>`;
 
+const wrapPermission = (type: string, permissions: boolean) =>
+  permissions ? `Authorized<${type}> | Denied` : type;
+
 const partialize = (type: string) => `Prettify$<Omit<${type}, ${type}Keys>>`;
 
 const gqlTypeToReturnTsString = (
@@ -162,7 +165,7 @@ const fieldTypeToSchemaType = (
 
 // Generators
 
-const imports = () =>
+const imports = (permissions: boolean) =>
   [
     'import { IncomingMessage, ServerResponse } from "http"',
     `import { ${[
@@ -180,10 +183,11 @@ const imports = () =>
       "GraphQLInt",
       "GraphQLFloat",
       "GraphQLBoolean",
+      ...(permissions ? ["GraphQLError"] : []),
     ].join(", ")} } from "graphql"`,
   ].join("\n");
 
-const serverTypes = () =>
+const serverTypes = (permissions: boolean) =>
   [
     "export class DetailedResponse<T> {",
     "  public content: T",
@@ -196,13 +200,37 @@ const serverTypes = () =>
     "    this.cookies = cookies",
     "  }",
     "}",
-  ].join("\n");
+  ]
+    .concat(
+      permissions
+        ? [
+            "",
+            "export class Authorized<T> {",
+            "  public content: T",
+            "",
+            "  constructor(content: T) {",
+            "    this.content = content",
+            "  }",
+            "}",
+            "",
+            "export class Denied {",
+            "  public reason?: string",
+            "",
+            "  constructor(reason?: string) {",
+            "    this.reason = reason",
+            "  }",
+            "}",
+          ]
+        : [],
+    )
+    .join("\n");
 
 const fieldsResolversType = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
   unions: Array<UnionTypeDefinitionNode>,
+  permissions: boolean,
 ) => {
   const types = getObjectTypes(schema, enums);
 
@@ -232,7 +260,7 @@ const fieldsResolversType = (
         `            (${node.name.value}: ${partialize(
           node.name.value,
         )}, context: Context) =>`,
-        `            ${toReturn(extenders(node))}`,
+        `            ${toReturn(wrapPermission(extenders(node), permissions))}`,
         "    };",
       ].join("\n"),
     )
@@ -251,6 +279,7 @@ const queriesAndMutationsResolversType = (
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
   unions: Array<UnionTypeDefinitionNode>,
+  permissions: boolean,
 ) => {
   const partialResolverConstraints = fieldResolversContraint(schema, enums);
 
@@ -268,7 +297,10 @@ const queriesAndMutationsResolversType = (
                 )}${
                   field.arguments && field.arguments.length > 0 ? ", " : ""
                 }context: Context) => ${toReturn(
-                  gqlTypeToReturnTsString(field.type, scalars, enums, unions),
+                  wrapPermission(
+                    gqlTypeToReturnTsString(field.type, scalars, enums, unions),
+                    permissions,
+                  ),
                 )}`,
             ),
           )
@@ -287,13 +319,17 @@ const queriesAndMutationsResolversType = (
                 enums,
                 unions,
               );
+              const mutationReturnType = wrapPermission(
+                `DetailedResponse<${returnType}> | ${returnType}`,
+                permissions,
+              );
               return `        ${field.name.value}: (${queryFunctionParameters(
                 field,
                 scalars,
                 enums,
               )}${
                 field.arguments && field.arguments.length > 0 ? ", " : ""
-              }context: Context) => DetailedResponse<${returnType}> | ${returnType} | Promise<DetailedResponse<${returnType}> | ${returnType}>`;
+              }context: Context) => ${mutationReturnType} | Promise<${mutationReturnType}>`;
             }),
           )
           .concat(["    }"])
@@ -308,11 +344,21 @@ const queriesAndMutationsResolversType = (
     .join("\n");
 };
 
+const fieldResolveExpression = (
+  fieldName: string,
+  typeName: string,
+  permissions: boolean,
+) =>
+  permissions
+    ? `"${fieldName}" in fieldsConfiguration.${typeName} ? async (source, args, context, info) => { const result = await (fieldsConfiguration.${typeName} as { ${fieldName}: (source: any, context: { userContext: Context }) => Authorized<unknown> | Denied | Promise<Authorized<unknown> | Denied> }).${fieldName}(source, context.userContext); if (result instanceof Denied) { throw new GraphQLError(result.reason ?? "Forbidden") } return result.content } : undefined`
+    : `"${fieldName}" in fieldsConfiguration.${typeName} ? (source, args, context, info) => (fieldsConfiguration.${typeName} as { ${fieldName}: (source: any, context: { userContext: Context }) => unknown }).${fieldName}(source, context.userContext) : undefined`;
+
 const typesFromConfiguration = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
   unions: Array<UnionTypeDefinitionNode>,
+  permissions: boolean,
 ) => {
   const types = getObjectTypes(schema, enums);
 
@@ -361,7 +407,7 @@ const typesFromConfiguration = (
             enums,
           )},`,
           // TODO: Add the proper source type to the cast
-          `            resolve: "${field.name.value}" in fieldsConfiguration.${type.name.value} ? (source, args, context, info) => (fieldsConfiguration.${type.name.value} as { ${field.name.value}: (source: any, context: { userContext: Context }) => unknown }).${field.name.value}(source, context.userContext) : undefined`,
+          `            resolve: ${fieldResolveExpression(field.name.value, type.name.value, permissions)}`,
           "        },",
         ]),
         "    })",
@@ -401,11 +447,37 @@ const typesFromConfiguration = (
     );
 };
 
+const queryResolveExpression = (
+  fieldName: string,
+  withArgs: boolean,
+  permissions: boolean,
+) =>
+  permissions
+    ? [
+        "                resolve: async (source, args, context, info) => {",
+        `                    const result = await Query.${fieldName}(${
+          withArgs ? "args, " : ""
+        }context.userContext)`,
+        "",
+        "                    if (result instanceof Denied) {",
+        `                        throw new GraphQLError(result.reason ?? "Forbidden")`,
+        "                    }",
+        "",
+        "                    return result.content",
+        "                }",
+      ]
+    : [
+        `                resolve: (source, args, context, info) => Query.${fieldName}(${
+          withArgs ? "args, " : ""
+        }context.userContext)`,
+      ];
+
 const schemaFromConfiguration = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
   unions: Array<UnionTypeDefinitionNode>,
+  permissions: boolean,
 ) => {
   const types = getObjectTypes(schema, enums);
 
@@ -428,11 +500,11 @@ const schemaFromConfiguration = (
               }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`,
           ),
           "                },",
-          `                resolve: (source, args, context, info) => Query.${
-            field.name.value
-          }(${
-            field.arguments && field.arguments.length > 0 ? "args, " : ""
-          }context.userContext)`,
+          ...queryResolveExpression(
+            field.name.value,
+            Boolean(field.arguments && field.arguments.length > 0),
+            permissions,
+          ),
           "            },",
         ])
       : [];
@@ -468,20 +540,49 @@ const schemaFromConfiguration = (
               }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`,
           ),
           "                },",
-          "                resolve: async (source, args, context, info) => {",
-          `                    const result = await Mutation.${
-            field.name.value
-          }(${
-            field.arguments && field.arguments.length > 0 ? "args, " : ""
-          }context.userContext)`,
-          "",
-          "                    if (result instanceof DetailedResponse) {",
-          "                        context.response.setHeaders(new Map(Object.entries(result.headers)))",
-          "                        context.response.setHeader('Set-Cookie', Object.entries(result.cookies).map(([key, value]) => `${key}=${value}`))",
-          "                    }",
-          "",
-          "                    return result instanceof DetailedResponse ? result.content : result",
-          "                }",
+          ...(permissions
+            ? [
+                "                resolve: async (source, args, context, info) => {",
+                `                    const permissionResult = await Mutation.${
+                  field.name.value
+                }(${
+                  field.arguments && field.arguments.length > 0
+                    ? "args, "
+                    : ""
+                }context.userContext)`,
+                "",
+                "                    if (permissionResult instanceof Denied) {",
+                `                        throw new GraphQLError(permissionResult.reason ?? "Forbidden")`,
+                "                    }",
+                "",
+                "                    const result = permissionResult.content",
+                "",
+                "                    if (result instanceof DetailedResponse) {",
+                "                        context.response.setHeaders(new Map(Object.entries(result.headers)))",
+                "                        context.response.setHeader('Set-Cookie', Object.entries(result.cookies).map(([key, value]) => `${key}=${value}`))",
+                "                    }",
+                "",
+                "                    return result instanceof DetailedResponse ? result.content : result",
+                "                }",
+              ]
+            : [
+                "                resolve: async (source, args, context, info) => {",
+                `                    const result = await Mutation.${
+                  field.name.value
+                }(${
+                  field.arguments && field.arguments.length > 0
+                    ? "args, "
+                    : ""
+                }context.userContext)`,
+                "",
+                "                    if (result instanceof DetailedResponse) {",
+                "                        context.response.setHeaders(new Map(Object.entries(result.headers)))",
+                "                        context.response.setHeader('Set-Cookie', Object.entries(result.cookies).map(([key, value]) => `${key}=${value}`))",
+                "                    }",
+                "",
+                "                    return result instanceof DetailedResponse ? result.content : result",
+                "                }",
+              ]),
           "            },",
         ])
       : [];
@@ -528,6 +629,7 @@ const server = (
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
   unions: Array<UnionTypeDefinitionNode>,
+  permissions: boolean,
 ) => {
   const partialResolverConstraints = fieldResolversContraint(schema, enums);
   const resolversGenerics = fieldResolversGenericSpread(schema, enums);
@@ -545,14 +647,18 @@ const server = (
     `    ({ Query${
       mutations ? ", Mutation" : ""
     } }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
-    ...typesFromConfiguration(schema, scalars, enums, unions).map(
+    ...typesFromConfiguration(schema, scalars, enums, unions, permissions).map(
       (line) => `    ${line}`,
     ),
     "    Object.entries(fieldsConfiguration)",
     "",
-    ...schemaFromConfiguration(schema, scalars, enums, unions).map(
-      (line) => `    ${line}`,
-    ),
+    ...schemaFromConfiguration(
+      schema,
+      scalars,
+      enums,
+      unions,
+      permissions,
+    ).map((line) => `    ${line}`),
     "",
     "    return schema",
     "}",
@@ -601,23 +707,30 @@ const server = (
 type Options = {
   scalarTypes: Record<string, ScalarTypeInfo>;
   scalarImports: string;
+  permissions?: boolean;
 };
 
 const schemaToServer = (
   schema: DocumentNode,
-  { scalarTypes, scalarImports }: Options,
+  { scalarTypes, scalarImports, permissions = false }: Options,
 ) => {
   const { scalars, enums, unions } = resolveScalars(schema, scalarTypes);
 
   return [
-    imports(),
+    imports(permissions),
     scalarImports,
     types(schema, scalars, enums, unions),
-    serverTypes(),
+    serverTypes(permissions),
     queriesTypes(schema, scalars, enums, unions),
-    fieldsResolversType(schema, scalars, enums, unions),
-    queriesAndMutationsResolversType(schema, scalars, enums, unions),
-    server(schema, scalars, enums, unions),
+    fieldsResolversType(schema, scalars, enums, unions, permissions),
+    queriesAndMutationsResolversType(
+      schema,
+      scalars,
+      enums,
+      unions,
+      permissions,
+    ),
+    server(schema, scalars, enums, unions, permissions),
   ].join("\n\n");
 };
 

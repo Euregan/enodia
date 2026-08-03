@@ -200,6 +200,7 @@ if (config.server) {
         configPath,
         resolve(config.server.path),
       ),
+      permissions: config.server.permissions,
     }),
   );
   console.log("✓ Wrote server at", resolve(config.server.path));

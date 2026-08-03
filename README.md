@@ -268,6 +268,72 @@ export default defineConfig({
 });
 ```
 
+### `server`
+
+#### `path`
+
+If you want to generate the server, you will need to provide its path:
+
+```typescript
+export default defineConfig({
+  server: {
+    path: "./path/to/server.ts",
+  },
+});
+```
+
+#### `permissions`
+
+By default, resolvers return their values directly, and it is up to you to
+enforce authorization however you see fit. Opting into `permissions` changes
+that: every resolver - root `Query`/`Mutation` fields and field resolvers
+alike - must wrap its return value in either `Authorized` or `Denied`. This is
+enforced by the generated types, so a resolver that returns a bare value
+instead of one of these two wrappers fails to typecheck, even when the
+permission should be unconditionally granted.
+
+```typescript
+export default defineConfig({
+  server: {
+    path: "./path/to/server.ts",
+    permissions: true,
+  },
+});
+```
+
+`Authorized` and `Denied` are exported from the generated file alongside
+`buildSchema` and `server`. You decide when to check the permission - before
+doing any work, after fetching the data you need to decide, or not at all for
+resolvers that are intentionally open:
+
+```typescript
+import { buildSchema, Authorized, Denied } from "./path/to/server.ts";
+
+buildSchema<Context>()({
+  User: {
+    email: (user, context) =>
+      context.userId === user.id
+        ? new Authorized(user.email)
+        : new Denied("You can only see your own email"),
+  },
+})({
+  Query: {
+    users: (context) => new Authorized(getUsers()),
+  },
+  Mutation: {
+    deleteUser: (args, context) =>
+      context.isAdmin
+        ? new Authorized(deleteUser(args.id))
+        : new Denied(),
+  },
+});
+```
+
+A `Denied` resolver short-circuits the field: the server throws a
+`GraphQLError` with the given reason (or a generic "Forbidden" message if none
+is given) instead of resolving it, and the rest of the query keeps resolving
+normally.
+
 ### `scalars`
 
 This is a map of custom scalar types in your GraphQL schema to Typescript types.

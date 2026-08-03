@@ -40,6 +40,7 @@ export const configSchema = z.object({
   server: z
     .object({
       path: z.string(),
+      permissions: z.boolean().optional(),
     })
     .optional(),
   cli: z
