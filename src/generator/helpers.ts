@@ -204,7 +204,10 @@ export const argsToTsDeclaration = (
       (arg) =>
         `${arg.name.value}${
           isGqlTypeOptional(arg.type) ? "?" : ""
-        }: ${gqlTypeToTsName(arg.type, scalars, enums)}`,
+        }: ${gqlTypeToTsString(
+          { type: arg.type, scalars, enums },
+          { optionalAsUndefined: false },
+        )}`,
     )
     .join(", ")} }`;
 
