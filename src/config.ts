@@ -33,6 +33,7 @@ export const configSchema = z.object({
       react: z
         .object({
           url: z.string(),
+          wsUrl: z.string().optional(),
         })
         .optional(),
     })

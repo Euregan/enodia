@@ -10,6 +10,7 @@ import {
   getInterfaces,
   getMutations,
   getQueries,
+  getSubscriptions,
   gqlTypeToGqlString,
   gqlTypeToTsName,
   isEnum,
@@ -26,14 +27,29 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
       "  fetch?: typeof fetch;",
       "  fetchPolicy?: FetchPolicy$",
       "  headers?: Record<string, string>",
+      // Internal: lets a query hook learn which entity keys its result depends
+      // on, so it can subscribe to live updates from mutations/subscriptions.
+      "  onEntitiesTouched?: (keys: Array<string>) => void",
+      ...(getSubscriptions(schema)
+        ? [
+            // Overrides the WS endpoint derived from the query/mutation URL
+            // (protocol swapped: http(s) -> ws(s)) for setups that serve
+            // subscriptions on a different endpoint.
+            "  wsUrl?: string",
+          ]
+        : []),
       "};",
     ] as Array<string>
   )
     .concat(
+      // `Error$` is used by the plain client's subscription callbacks too
+      // (`subscribe()`, generated whenever the schema has a `Subscription`
+      // root), not just by hooks - so it can't be gated on `react` alone.
+      react || getSubscriptions(schema) ? ["", "type Error$ = string;"] : [],
+    )
+    .concat(
       react && getQueries(schema)
         ? [
-            "",
-            "type Error$ = string;",
             "",
             "type HookFetchPolicy$ = FetchPolicy$ | 'cache-and-network';",
             "",
@@ -102,15 +118,36 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
           ]
         : [],
     )
+    .concat(
+      react && getSubscriptions(schema)
+        ? [
+            "",
+            "/**",
+            " * The type returned by a subscription hook. Unlike a query, there is",
+            " * no manual refetch: the effect resubscribes automatically whenever",
+            " * the query/args change, and unsubscribes on unmount.",
+            " */",
+            "type SubscriptionResult$<Data> =",
+            "  | readonly [true, null, null]",
+            "  | readonly [false, Error$, null]",
+            "  | readonly [false, null, Data];",
+          ]
+        : [],
+    )
     .join("\n");
 
 const queryToGqlTypesEntry = (
-  node: { name: { value: string }; fields?: ReadonlyArray<FieldDefinitionNode> },
+  node: {
+    name: { value: string };
+    fields?: ReadonlyArray<FieldDefinitionNode>;
+  },
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
 ) =>
   `  ${node.name.value}Query: { ${(node.fields || [])
-    .filter((field) => !isEnum(field.type, enums) && !isScalar(field.type, scalars))
+    .filter(
+      (field) => !isEnum(field.type, enums) && !isScalar(field.type, scalars),
+    )
     .map(
       (field) =>
         `${field.name.value}: { query: '${gqlTypeToTsName(
@@ -146,7 +183,7 @@ export const queryArgsToTypes = (
           (node) =>
             node.kind === Kind.OBJECT_TYPE_DEFINITION &&
             // We don't expose these types
-            !["Query", "Mutation"].includes(node.name.value),
+            !["Query", "Mutation", "Subscription"].includes(node.name.value),
         ) as Array<ObjectTypeDefinitionNode>
       ).map((node) => queryToGqlTypesEntry(node, scalars, enums)),
     )

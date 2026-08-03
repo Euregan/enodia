@@ -5,6 +5,43 @@ import schemaToWeb from "./web.js";
 
 type FetchPolicy = "cache-first" | "network-only" | "no-cache" | "cache-only";
 
+// Stands in for `graphql-ws`'s real WebSocket transport: `subscribe()` calls
+// `createClient(...).subscribe(payload, sink)`, so capturing every `sink` lets
+// a test simulate a server event with `sink.next(...)` without a real socket.
+const graphqlWsMock = vi.hoisted(() => {
+  const subscriptions: Array<{
+    payload: { query: string; variables?: Record<string, unknown> };
+    sink: {
+      next: (value: unknown) => void;
+      error: (error: unknown) => void;
+      complete: () => void;
+    };
+  }> = [];
+
+  return {
+    subscriptions,
+    createClient: vi.fn(() => ({
+      // Mirrors a real transport: the returned cleanup function detaches the
+      // operation, so a message that arrives for it afterwards has nowhere to
+      // be delivered - the same guarantee `graphql-ws` gives on unsubscribe.
+      subscribe: (payload: unknown, sink: unknown) => {
+        const entry = {
+          payload: payload as { query: string },
+          sink: sink as (typeof subscriptions)[number]["sink"],
+        };
+        subscriptions.push(entry);
+        return () => {
+          const index = subscriptions.indexOf(entry);
+          if (index !== -1) subscriptions.splice(index, 1);
+        };
+      },
+      dispose: async () => {},
+    })),
+  };
+});
+
+vi.mock("graphql-ws", () => ({ createClient: graphqlWsMock.createClient }));
+
 // Canned server responses. Every entity carries id + __typename, as a real
 // server would once Enodia injects them into the request.
 const respond = (operation: string, variables: Record<string, string>) => {
@@ -107,6 +144,9 @@ const setup = async () => {
       type Mutation {
         createUser(name: String!, email: String!): User!
       }
+      type Subscription {
+        userUpdated(id: ID!): User!
+      }
     `,
     {
       scalarTypes: {
@@ -124,6 +164,7 @@ const setup = async () => {
   await fs.mkdir("./generated-tests-files", { recursive: true });
   await fs.writeFile("./generated-tests-files/storeClient.ts", source);
 
+  graphqlWsMock.subscriptions.length = 0;
   vi.resetModules();
   const enodia = (await import("../generated-tests-files/storeClient.js"))
     .default;
@@ -375,4 +416,94 @@ test("cache-only throws when nothing is cached", async () => {
   await expect(cacheOnly.query.user(["name"], { id: "1" })).rejects.toThrow(
     /cache-only/,
   );
+});
+
+test("a subscription event writes into the shared cache, updating an already-cached query", async () => {
+  const { makeClient, state } = await setup();
+  const client = makeClient();
+
+  await client.query.user(["name"], { id: "1" });
+  expect(state.calls).toBe(1);
+
+  const received: Array<unknown> = [];
+  client.subscription.userUpdated(
+    ["name", "email"],
+    { id: "1" },
+    { onData: (data: unknown) => received.push(data) },
+  );
+
+  expect(graphqlWsMock.subscriptions).toHaveLength(1);
+  const { sink } = graphqlWsMock.subscriptions[0];
+  sink.next({
+    data: {
+      userUpdated: {
+        __typename: "User",
+        id: "1",
+        name: "Bob",
+        email: "b1@x",
+      },
+    },
+  });
+
+  expect(received).toEqual([{ name: "Bob", email: "b1@x" }]);
+
+  // The entity was updated via the subscription, not a new fetch, so a
+  // cache-first read of the same query sees it without hitting the network.
+  expect(await client.query.user(["name", "email"], { id: "1" })).toEqual({
+    name: "Bob",
+    email: "b1@x",
+  });
+  expect(state.calls).toBe(1);
+});
+
+test("a subscription's onError fires when the transport reports an error", async () => {
+  const { makeClient } = await setup();
+  const client = makeClient();
+
+  const errors: Array<unknown> = [];
+  client.subscription.userUpdated(["name"], { id: "1" }, {
+    onData: () => {},
+    onError: (error: unknown) => errors.push(error),
+  });
+
+  const { sink } = graphqlWsMock.subscriptions[0];
+  sink.error(new Error("connection lost"));
+
+  expect(errors).toEqual([new Error("connection lost")]);
+});
+
+test("subscribe() sends a subscription operation for the field being subscribed to", async () => {
+  const { makeClient } = await setup();
+  const client = makeClient();
+
+  client.subscription.userUpdated(["name"], { id: "1" }, { onData: () => {} });
+
+  const { payload } = graphqlWsMock.subscriptions[0];
+  expect(payload.query).toContain("subscription userUpdated");
+  expect(payload.query).toContain("name");
+});
+
+test("unsubscribing detaches from the transport, so a later event has no callback to reach", async () => {
+  const { makeClient } = await setup();
+  const client = makeClient();
+
+  const received: Array<unknown> = [];
+  const unsubscribe = client.subscription.userUpdated(
+    ["name"],
+    { id: "1" },
+    { onData: (data: unknown) => received.push(data) },
+  );
+
+  expect(graphqlWsMock.subscriptions).toHaveLength(1);
+
+  unsubscribe();
+
+  // Enodia's client hands back exactly what the transport's `subscribe()`
+  // returned, uncalled, until now - calling it is what makes the transport
+  // forget the operation. Whether a later server message actually reaches
+  // `onData` is the transport's job from here (it won't call a sink for an
+  // operation it no longer tracks), not something Enodia enforces itself -
+  // this asserts Enodia correctly triggers that forgetting.
+  expect(graphqlWsMock.subscriptions).toHaveLength(0);
+  expect(received).toEqual([]);
 });

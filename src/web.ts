@@ -20,6 +20,7 @@ import {
   getMutations,
   getObjectTypes,
   getQueries,
+  getSubscriptions,
   gqlTypeToGqlString,
   gqlTypeToTsName,
   isEnum,
@@ -45,11 +46,12 @@ import { clientCodecRuntime, hasCodecs } from "./generator/codecs.ts";
 
 // Generators
 
-const imports = (hooks: boolean) =>
-  (hooks
-    ? ["import { useState, useEffect, useCallback } from 'react'"]
-    : []
-  ).join("\n");
+const imports = (hooks: boolean, subscriptions: boolean) =>
+  (hooks ? ["import { useState, useEffect, useCallback } from 'react'"] : [])
+    .concat(
+      subscriptions ? ["import { createClient } from 'graphql-ws'"] : [],
+    )
+    .join("\n");
 
 // A single (non-list) `ID` argument, so its value is safe to treat as the id.
 const isIdArgument = (type: TypeNode): boolean => {
@@ -85,6 +87,37 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "const entities: Record<string, any> = {};",
     "const roots: Record<string, any> = {};",
     "const MISS = Symbol('miss');",
+    "",
+    // Entity-level pub-sub: a hook that displayed a given entity subscribes to
+    // its key, so a write from anywhere (a mutation, a subscription event)
+    // re-renders it without an explicit refetch.
+    "const entityListeners: Record<string, Set<() => void>> = {};",
+    "",
+    // Arrays/`.forEach` rather than `for...of`/spread over `Set`, so the
+    // generated file typechecks regardless of the consumer's `target`/`lib`
+    // (iterating a `Set` needs `--downlevelIteration` or an ES2015+ target).
+    "const notifyEntities = (keys: Set<string>) => {",
+    "  const listeners = new Set<() => void>();",
+    "  keys.forEach((key) => {",
+    "    const perKey = entityListeners[key];",
+    "    if (perKey) {",
+    "      perKey.forEach((listener) => listeners.add(listener));",
+    "    }",
+    "  });",
+    "  listeners.forEach((listener) => listener());",
+    "};",
+    "",
+    "const subscribeEntities = (keys: Array<string>, callback: () => void): (() => void) => {",
+    "  for (const key of keys) {",
+    "    if (!entityListeners[key]) entityListeners[key] = new Set();",
+    "    entityListeners[key].add(callback);",
+    "  }",
+    "  return () => {",
+    "    for (const key of keys) {",
+    "      entityListeners[key]?.delete(callback);",
+    "    }",
+    "  };",
+    "};",
     "",
     // The key field for each entity type (only types that expose an `id`).
     "const entityKeys: Record<string, string> = {",
@@ -127,7 +160,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "",
     // Walk a response along its selection, writing entities and returning the
     // ref shape to store as a root (an object with `id` becomes `{ __ref }`).
-    "const normalize = (query: keyof typeof queryToGqlTypes, returns: Fields$, data: any): any => {",
+    "const normalize = (query: keyof typeof queryToGqlTypes, returns: Fields$, data: any, written: Set<string>): any => {",
     "  if (data === null || data === undefined) return data ?? null;",
     "  const record: Record<string, any> = {};",
     // Interface fields (unlike unions) can select their own fields alongside
@@ -144,38 +177,40 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "    if ('$on' in field && field.$on) {",
     "      const selection = (field.$on as Record<string, Fields$>)[data.__typename];",
     "      if (selection) {",
-    "        const member = normalize(`${data.__typename}Query` as keyof typeof queryToGqlTypes, [...ownFields, ...selection] as Fields$, data);",
+    "        const member = normalize(`${data.__typename}Query` as keyof typeof queryToGqlTypes, [...ownFields, ...selection] as Fields$, data, written);",
     "        if (member && typeof member === 'object' && '__ref' in member) return member;",
     "        Object.assign(record, member);",
     "      }",
     "      continue;",
     "    }",
     "    const key = Object.keys(field).filter((k) => k !== '$args')[0] as string;",
-    "    record[key] = normalizeChild(childQuery(query, key), (field as any)[key], data[key]);",
+    "    record[key] = normalizeChild(childQuery(query, key), (field as any)[key], data[key], written);",
     "  }",
     "  const type = query.replace(/Query$/, '');",
     "  const keyField = entityKeys[type];",
     "  if (keyField && data[keyField] != null) {",
     "    const id = `${type}:${data[keyField]}`;",
     "    entities[id] = { ...(entities[id] || {}), ...record, __typename: type };",
+    "    written.add(id);",
     "    return { __ref: id };",
     "  }",
     "  return record;",
     "};",
     "",
-    "const normalizeChild = (query: keyof typeof queryToGqlTypes, returns: Fields$, value: any): any =>",
+    "const normalizeChild = (query: keyof typeof queryToGqlTypes, returns: Fields$, value: any, written: Set<string>): any =>",
     "  value === null || value === undefined",
     "    ? value ?? null",
     "    : Array.isArray(value)",
-    "    ? value.map((item) => normalize(query, returns, item))",
-    "    : normalize(query, returns, value);",
+    "    ? value.map((item) => normalize(query, returns, item, written))",
+    "    : normalize(query, returns, value, written);",
     "",
     // Rebuild a value from its stored ref shape, resolving entities. Returns MISS
     // if any referenced entity or selected field is absent from the cache.
-    "const denormalize = (query: keyof typeof queryToGqlTypes, returns: Fields$, node: any): any => {",
+    "const denormalize = (query: keyof typeof queryToGqlTypes, returns: Fields$, node: any, touched: Array<string>): any => {",
     "  if (node === null || node === undefined) return node ?? null;",
     "  const source = node.__ref ? entities[node.__ref] : node;",
     "  if (!source) return MISS;",
+    "  if (node.__ref) touched.push(node.__ref);",
     "  const out: Record<string, any> = {};",
     "  for (const field of returns ?? []) {",
     "    if (typeof field === 'string') {",
@@ -186,7 +221,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "    if ('$on' in field && field.$on) {",
     "      const selection = (field.$on as Record<string, Fields$>)[source.__typename];",
     "      if (selection) {",
-    "        const member = denormalize(`${source.__typename}Query` as keyof typeof queryToGqlTypes, selection, node);",
+    "        const member = denormalize(`${source.__typename}Query` as keyof typeof queryToGqlTypes, selection, node, touched);",
     "        if (member === MISS) return MISS;",
     "        Object.assign(out, member);",
     "      }",
@@ -194,35 +229,35 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "    }",
     "    const key = Object.keys(field).filter((k) => k !== '$args')[0] as string;",
     "    if (!(key in source)) return MISS;",
-    "    const child = denormalizeChild(childQuery(query, key), (field as any)[key], source[key]);",
+    "    const child = denormalizeChild(childQuery(query, key), (field as any)[key], source[key], touched);",
     "    if (child === MISS) return MISS;",
     "    out[key] = child;",
     "  }",
     "  return out;",
     "};",
     "",
-    "const denormalizeChild = (query: keyof typeof queryToGqlTypes, returns: Fields$, value: any): any => {",
+    "const denormalizeChild = (query: keyof typeof queryToGqlTypes, returns: Fields$, value: any, touched: Array<string>): any => {",
     "  if (value === null || value === undefined) return value ?? null;",
-    "  if (!Array.isArray(value)) return denormalize(query, returns, value);",
+    "  if (!Array.isArray(value)) return denormalize(query, returns, value, touched);",
     "  const items: any[] = [];",
     "  for (const item of value) {",
-    "    const child = denormalize(query, returns, item);",
+    "    const child = denormalize(query, returns, item, touched);",
     "    if (child === MISS) return MISS;",
     "    items.push(child);",
     "  }",
     "  return items;",
     "};",
     "",
-    "const readCache = (query: string, returns: Fields$, args: Record<string, Arguments$> | undefined, queryType: keyof typeof queryToGqlTypes | null) => {",
+    "const readCache = (query: string, returns: Fields$, args: Record<string, Arguments$> | undefined, queryType: keyof typeof queryToGqlTypes | null, touched: Array<string>) => {",
     "  const key = rootKey(query, args);",
     "  if (key in roots) {",
-    "    return queryType === null ? roots[key] : denormalizeChild(queryType, returns, roots[key]);",
+    "    return queryType === null ? roots[key] : denormalizeChild(queryType, returns, roots[key], touched);",
     "  }",
     // No stored root, but a single-entity `ID` query can reach the entity
     // directly, so a user loaded by one query is served to another.
     "  const idArg = redirects[query];",
     "  if (idArg && queryType !== null && args && args[idArg] != null) {",
-    "    return denormalize(queryType, returns, { __ref: `${queryType.replace(/Query$/, '')}:${args[idArg]}` });",
+    "    return denormalize(queryType, returns, { __ref: `${queryType.replace(/Query$/, '')}:${args[idArg]}` }, touched);",
     "  }",
     "  return MISS;",
     "};",
@@ -232,8 +267,10 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "    if (queryOrMutation === 'query') roots[rootKey(query, args)] = value;",
     "    return value;",
     "  }",
-    "  const structure = normalizeChild(queryType, returns, value);",
+    "  const written = new Set<string>();",
+    "  const structure = normalizeChild(queryType, returns, value, written);",
     "  if (queryOrMutation === 'query') roots[rootKey(query, args)] = structure;",
+    "  notifyEntities(written);",
     "  return structure;",
     "};",
   ].join("\n");
@@ -257,8 +294,12 @@ const call = (withCodecs: boolean, defaultFetchPolicy: FetchPolicy) =>
     "",
     // Mutations always hit the network; only queries read the cache.
     "    if (queryOrMutation === 'query' && fetchPolicy !== 'network-only' && fetchPolicy !== 'no-cache') {",
-    "      const cached = readCache(query, returns, args, queryType);",
-    "      if (cached !== MISS) return { data: { [query]: cached } };",
+    "      const cacheTouched: Array<string> = [];",
+    "      const cached = readCache(query, returns, args, queryType, cacheTouched);",
+    "      if (cached !== MISS) {",
+    "        options.onEntitiesTouched?.(cacheTouched);",
+    "        return { data: { [query]: cached } };",
+    "      }",
     "    }",
     "",
     "    if (fetchPolicy === 'cache-only') {",
@@ -299,14 +340,97 @@ const call = (withCodecs: boolean, defaultFetchPolicy: FetchPolicy) =>
       : []),
     "    if (fetchPolicy !== 'no-cache') {",
     "      const structure = writeCache(query, effectiveReturns, args, queryType, queryOrMutation, result.data[query]);",
+    "      const networkTouched: Array<string> = [];",
     // Return the normalized value rebuilt for the original selection, so
     // callers never see the key fields injected above
-    "      const clean = queryType === null ? structure : denormalizeChild(queryType, returns, structure);",
+    "      const clean = queryType === null ? structure : denormalizeChild(queryType, returns, structure, networkTouched);",
+    "      options.onEntitiesTouched?.(networkTouched);",
     "      if (clean !== MISS) result.data[query] = clean;",
     "    }",
     "",
     "    return result;",
     "}",
+  ].join("\n");
+
+// One `graphql-ws` client per WS URL: the library multiplexes every
+// subscription for that URL over a single socket, so clients are memoized
+// rather than opening a new connection per subscribed field.
+const subscriptionRuntime = (withCodecs: boolean) =>
+  [
+    "const wsClients: Record<string, ReturnType<typeof createClient>> = {};",
+    "",
+    "const wsUrlFor = (graphqlServerUrl: string): string =>",
+    "  graphqlServerUrl.replace(/^http/, 'ws');",
+    "",
+    "const getWsClient = (graphqlServerUrl: string, wsUrl?: string): ReturnType<typeof createClient> => {",
+    "  const url = wsUrl || wsUrlFor(graphqlServerUrl);",
+    "  if (!wsClients[url]) {",
+    "    wsClients[url] = createClient({ url });",
+    "  }",
+    "  return wsClients[url];",
+    "};",
+    "",
+    "const subscribe = (",
+    "  graphqlServerUrl: string,",
+    "  query: string,",
+    "  returns: Fields$,",
+    "  args: Record<string, Arguments$> | undefined,",
+    "  argTypes: ArgumentTypes$ | undefined,",
+    "  queryType: keyof typeof queryToGqlTypes | null,",
+    "  callbacks: { onData: (data: any) => void; onError?: (error: Error$) => void; onComplete?: () => void },",
+    "  options: CallOptions$ = {}",
+    "): (() => void) => {",
+    "  const effectiveReturns = queryType !== null ? withEntityIds(queryType, returns) : returns;",
+    "",
+    "  return getWsClient(graphqlServerUrl, options.wsUrl).subscribe(",
+    "    {",
+    "      operationName: query,",
+    "      query: `subscription ${query}${",
+    "        argTypes && args ? `(${argsToGql(argTypes, args, queryType, effectiveReturns)})` : ''",
+    "      } {\\n ${query}${",
+    "        args ? `(${variablesToArgs(args)})` : ''",
+    "      }\\n ${fieldsToQuery(effectiveReturns)} }`,",
+    withCodecs
+      ? "      variables: { ...encodeArguments(args, argTypes), ...returnsToVariables(effectiveReturns) },"
+      : "      variables: { ...args, ...returnsToVariables(effectiveReturns) },",
+    "    },",
+    "    {",
+    "      next: (message) => {",
+    "        if (!message.data || message.data[query] === undefined) {",
+    "          return;",
+    "        }",
+    "",
+    "        let value = message.data[query];",
+    ...(withCodecs
+      ? [
+          "        if (queryType) {",
+          "          value = decodeResult(queryType.replace(/Query$/, ''), value);",
+          "        }",
+          "",
+        ]
+      : []),
+    "        if (queryType === null) {",
+    "          callbacks.onData(value);",
+    "          return;",
+    "        }",
+    "",
+    // Entities are written (and any already-mounted query hook watching them
+    // notified) the same way a query/mutation result is, but a subscription
+    // event has no repeatable "root query" of its own, so nothing is written
+    // to `roots`.
+    "        const written = new Set<string>();",
+    "        const structure = normalizeChild(queryType, effectiveReturns, value, written);",
+    "        notifyEntities(written);",
+    "",
+    "        const touched: Array<string> = [];",
+    "        const clean = denormalizeChild(queryType, returns, structure, touched);",
+    "        callbacks.onData(clean !== MISS ? clean : value);",
+    "      },",
+    "      error: (error) => callbacks.onError?.(error as Error$),",
+    "      complete: () => callbacks.onComplete?.(),",
+    "    },",
+    "  );",
+    "};",
   ].join("\n");
 
 const queryFunctionParameters = (
@@ -348,6 +472,7 @@ const queryOrMutationFunctions = (
   queries: ObjectTypeDefinitionNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
+  queryOrMutation: "query" | "mutation",
 ): string =>
   (queries.fields || [])
     .map((field) =>
@@ -380,9 +505,43 @@ const queryOrMutationFunctions = (
           isEnum(field.type, enums) || isScalar(field.type, scalars)
             ? "null"
             : `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
-        }, "query", options).then(({ data }) => data.${field.name.value}),`,
+        }, "${queryOrMutation}", options).then(({ data }) => data.${field.name.value}),`,
       ].join("\n"),
     )
+    .join("\n");
+
+const subscriptionFunctions = (
+  subscriptions: ObjectTypeDefinitionNode,
+  scalars: Array<GqlScalarToTs>,
+  enums: Array<EnumTypeDefinitionNode>,
+): string =>
+  (subscriptions.fields || [])
+    .map((field) => {
+      const usesQuerySelection =
+        !isScalar(field.type, scalars) && !isEnum(field.type, enums);
+      const hasArgs = !!(field.arguments && field.arguments.length > 0);
+      const params = queryFunctionParameters(field, scalars, enums);
+      const dataType = queryResult(field.type, scalars, enums);
+      return [
+        `${jsDoc(field.description?.value, "    ")}    ${field.name.value}: ${
+          usesQuerySelection
+            ? `<T extends ${gqlTypeToTsName(field.type, scalars, enums)}Query[number]>`
+            : ""
+        }(${params}${
+          params ? ", " : ""
+        }callbacks: { onData: (data: ${dataType}) => void; onError?: (error: Error$) => void; onComplete?: () => void }): (() => void) => subscribe(graphqlServerUrl, '${field.name.value}', ${
+          usesQuerySelection ? "query" : "null"
+        }${
+          hasArgs
+            ? `, args, { ${gqlArgTypes(field.arguments)} }`
+            : ", undefined, undefined"
+        }, ${
+          usesQuerySelection
+            ? `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
+            : "null"
+        }, callbacks, options),`,
+      ].join("\n");
+    })
     .join("\n");
 
 const client = (
@@ -392,6 +551,7 @@ const client = (
 ) => {
   const queries = getQueries(schema);
   const mutations = getMutations(schema);
+  const subscriptions = getSubscriptions(schema);
 
   return (
     // TODO: Handle custom headers (i.e. for authentication)
@@ -400,8 +560,8 @@ const client = (
         queries
           ? [
               "  query: {",
-              queryOrMutationFunctions(queries, scalars, enums),
-              `  }${mutations ? "," : ""}`,
+              queryOrMutationFunctions(queries, scalars, enums, "query"),
+              `  }${mutations || subscriptions ? "," : ""}`,
             ]
           : [],
       )
@@ -409,7 +569,16 @@ const client = (
         mutations
           ? [
               "  mutation: {",
-              queryOrMutationFunctions(mutations, scalars, enums),
+              queryOrMutationFunctions(mutations, scalars, enums, "mutation"),
+              `  }${subscriptions ? "," : ""}`,
+            ]
+          : [],
+      )
+      .concat(
+        subscriptions
+          ? [
+              "  subscription: {",
+              subscriptionFunctions(subscriptions, scalars, enums),
               "  }",
             ]
           : [],
@@ -421,6 +590,7 @@ const client = (
 
 const react = (
   url: string,
+  wsUrl: string | undefined,
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
   enums: Array<EnumTypeDefinitionNode>,
@@ -492,21 +662,23 @@ const react = (
         `  ${params}options: { skip?: boolean; fetchPolicy?: HookFetchPolicy$ } = {}`,
         `): CacheAndNetworkQueryResult$<${dataType}> {`,
         `  const { skip, fetchPolicy = '${defaultFetchPolicy}' } = options;`,
-        `  const [state, setState] = useState<{ key: string; loading: boolean; error: Error$ | null; data: ${dataType} | undefined }>({`,
+        `  const [state, setState] = useState<{ key: string; loading: boolean; error: Error$ | null; data: ${dataType} | undefined; touched: Array<string> }>({`,
         "    key: '',",
         "    loading: true,",
         "    error: null,",
         "    data: undefined,",
+        "    touched: [],",
         "  });",
         "",
         "  const fetch = useCallback(",
         "    () => {",
         `      const key = ${keyExpr};`,
+        "      let touched: Array<string> = [];",
         `      setState((s) => ({ ...s, loading: true, error: null, key, data: ${nextData} }));`,
         "",
-        `      return ${callPrefix}, { fetchPolicy: 'network-only' })`,
+        `      return ${callPrefix}, { fetchPolicy: 'network-only', onEntitiesTouched: (keys) => { touched = keys } })`,
         "        .then(({ data }) => {",
-        `          setState((s) => (s.key === key ? { ...s, loading: false, data: data.${name} } : s));`,
+        `          setState((s) => (s.key === key ? { ...s, loading: false, data: data.${name}, touched } : s));`,
         `          return data.${name};`,
         "        })",
         "        .catch((error: Error$) => {",
@@ -527,19 +699,21 @@ const react = (
         `    setState((s) => ({ ...s, loading: true, error: null, key, data: ${nextData} }));`,
         "",
         "    if (fetchPolicy === 'cache-and-network') {",
-        `      ${callPrefix}, { fetchPolicy: 'cache-only' })`,
+        "      let cacheTouched: Array<string> = [];",
+        `      ${callPrefix}, { fetchPolicy: 'cache-only', onEntitiesTouched: (keys) => { cacheTouched = keys } })`,
         "        .then(({ data }) => {",
         "          if (active) {",
-        `            setState((s) => (s.key === key ? { ...s, loading: false, data: data.${name} } : s));`,
+        `            setState((s) => (s.key === key ? { ...s, loading: false, data: data.${name}, touched: cacheTouched } : s));`,
         "          }",
         "        })",
         "        .catch(() => {});",
         "    }",
         "",
-        `    ${callPrefix}, { fetchPolicy: fetchPolicy === 'cache-and-network' ? 'network-only' : fetchPolicy })`,
+        "    let networkTouched: Array<string> = [];",
+        `    ${callPrefix}, { fetchPolicy: fetchPolicy === 'cache-and-network' ? 'network-only' : fetchPolicy, onEntitiesTouched: (keys) => { networkTouched = keys } })`,
         "      .then(({ data }) => {",
         "        if (active) {",
-        `          setState((s) => (s.key === key ? { ...s, loading: false, data: data.${name} } : s));`,
+        `          setState((s) => (s.key === key ? { ...s, loading: false, data: data.${name}, touched: networkTouched } : s));`,
         "        }",
         "      })",
         "      .catch((error: Error$) => {",
@@ -552,6 +726,25 @@ const react = (
         "      active = false;",
         "    };",
         `  }, [${["skip", ...inputDeps, "fetchPolicy"].join(", ")}]);`,
+        "",
+        // Live updates: once a fetch resolves, re-render this hook whenever any
+        // entity it displayed changes elsewhere (a mutation or a subscription
+        // event), without an explicit refetch.
+        "  useEffect(() => {",
+        "    if (state.touched.length === 0) {",
+        "      return;",
+        "    }",
+        "",
+        `    const key = ${keyExpr};`,
+        "",
+        "    return subscribeEntities(state.touched, () => {",
+        `      ${callPrefix}, { fetchPolicy: 'cache-only' })`,
+        "        .then(({ data }) => {",
+        `          setState((s) => (s.key === key ? { ...s, data: data.${name} } : s));`,
+        "        })",
+        "        .catch(() => {});",
+        "    });",
+        "  }, [state.touched]);",
         "",
         "  if (state.loading) {",
         "    return [true, null, state.data ?? null, fetch];",
@@ -658,6 +851,82 @@ const react = (
         ].join("\n"),
       ),
     )
+    .concat(
+      (getSubscriptions(schema)?.fields || []).map((field) => {
+        const name = field.name.value;
+        const usesQuerySelection =
+          !isScalar(field.type, scalars) && !isEnum(field.type, enums);
+        const hasArgs = !!(field.arguments && field.arguments.length > 0);
+        const dataType = queryResult(field.type, scalars, enums);
+        const capitalizedName = `${name[0].toUpperCase()}${name.slice(1)}`;
+        const generic = usesQuerySelection
+          ? `<${fieldsConstraint(field.type, scalars, enums)}>`
+          : "";
+        const params = `${queryFunctionParameters(field, scalars, enums)}${
+          usesQuerySelection || hasArgs ? ", " : ""
+        }`;
+        const inputDeps = [
+          usesQuerySelection ? "JSON.stringify(query)" : null,
+          hasArgs ? "JSON.stringify(args)" : null,
+        ].filter(Boolean);
+        const subscribeCall = `subscribe('${url}', '${name}', ${
+          usesQuerySelection ? "query" : "null"
+        }${
+          hasArgs ? `, args, { ${gqlArgTypes(field.arguments)} }` : ", undefined, undefined"
+        }, ${
+          usesQuerySelection
+            ? `'${gqlTypeToTsName(field.type, scalars, enums, "Query")}'`
+            : "null"
+        }`;
+
+        return [
+          `${jsDoc(field.description?.value)}export function use${capitalizedName}Subscription${generic}(`,
+          `  ${params}options: { skip?: boolean } = {}`,
+          `): SubscriptionResult$<${dataType}> {`,
+          "  const { skip } = options;",
+          `  const [state, setState] = useState<{ loading: boolean; error: Error$ | null; data: ${dataType} | undefined }>({`,
+          "    loading: true,",
+          "    error: null,",
+          "    data: undefined,",
+          "  });",
+          "",
+          "  useEffect(() => {",
+          "    if (skip) {",
+          "      return;",
+          "    }",
+          "",
+          "    setState({ loading: true, error: null, data: undefined });",
+          "",
+          // No manual-refetch "key" guard needed here (unlike the query hook):
+          // `unsubscribe` fully stops further `next` callbacks, so there is no
+          // stale in-flight response that could land after args/query change.
+          `    const unsubscribe = ${subscribeCall}, {`,
+          "      onData: (data) => setState({ loading: false, error: null, data }),",
+          "      onError: (error) => setState({ loading: false, error, data: undefined }),",
+          `    }${wsUrl ? `, { wsUrl: '${wsUrl}' }` : ""});`,
+          "",
+          "    return () => {",
+          "      unsubscribe();",
+          "    };",
+          `  }, [skip${inputDeps.length > 0 ? `, ${inputDeps.join(", ")}` : ""}]);`,
+          "",
+          "  if (state.loading) {",
+          "    return [true, null, null];",
+          "  }",
+          "",
+          "  if (state.error) {",
+          "    return [false, state.error, null];",
+          "  }",
+          "",
+          "  if (state.data !== undefined) {",
+          "    return [false, null, state.data];",
+          "  }",
+          "",
+          "  return [true, null, null];",
+          "}",
+        ].join("\n");
+      }),
+    )
     .join("\n\n");
 };
 
@@ -666,7 +935,7 @@ const react = (
 type Options = {
   scalarTypes: Record<string, ScalarTypeInfo>;
   scalarImports: string;
-  withReact?: { url: string };
+  withReact?: { url: string; wsUrl?: string };
   defaultFetchPolicy?: HookFetchPolicy;
 };
 
@@ -681,13 +950,14 @@ const schemaToWeb = (
 ) => {
   const { scalars, enums, unions } = resolveScalars(schema, scalarTypes);
   const withCodecs = hasCodecs(scalars);
+  const withSubscriptions = Boolean(getSubscriptions(schema));
   const callDefaultFetchPolicy: FetchPolicy =
     defaultFetchPolicy === "cache-and-network"
       ? "network-only"
       : defaultFetchPolicy;
 
   return [
-    imports(!!withReact),
+    imports(!!withReact, withSubscriptions),
     scalarImports,
     types(schema, scalars, enums, unions),
     clientTypes(schema, !!withReact),
@@ -700,10 +970,18 @@ const schemaToWeb = (
     withCodecs ? clientCodecRuntime(schema, scalars, enums, unions) : "",
     store(schema, enums),
     call(withCodecs, callDefaultFetchPolicy),
+    withSubscriptions ? subscriptionRuntime(withCodecs) : "",
     queriesTypes(schema, scalars, enums, unions),
     client(schema, scalars, enums),
     withReact
-      ? react(withReact.url, schema, scalars, enums, defaultFetchPolicy)
+      ? react(
+          withReact.url,
+          withReact.wsUrl,
+          schema,
+          scalars,
+          enums,
+          defaultFetchPolicy,
+        )
       : "",
   ].join("\n\n");
 };

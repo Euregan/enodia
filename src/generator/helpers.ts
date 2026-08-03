@@ -208,7 +208,7 @@ export const argsToTsDeclaration = (
     )
     .join(", ")} }`;
 
-const getRootType = (schema: DocumentNode, name: "Query" | "Mutation") =>
+const getRootType = (schema: DocumentNode, name: "Query" | "Mutation" | "Subscription") =>
   schema.definitions.find(
     (node) =>
       node.kind === Kind.OBJECT_TYPE_DEFINITION && node.name.value === name,
@@ -219,6 +219,9 @@ export const getQueries = (schema: DocumentNode) =>
 
 export const getMutations = (schema: DocumentNode) =>
   getRootType(schema, "Mutation");
+
+export const getSubscriptions = (schema: DocumentNode) =>
+  getRootType(schema, "Subscription");
 
 export const getEnums = (schema: DocumentNode) =>
   schema.definitions.filter(
@@ -237,7 +240,7 @@ export const getObjectTypes = (
   schema.definitions.filter(
     (node) =>
       node.kind === Kind.OBJECT_TYPE_DEFINITION &&
-      !["Query", "Mutation"].includes(node.name.value) &&
+      !["Query", "Mutation", "Subscription"].includes(node.name.value) &&
       !isEnum(node, enums),
   ) as Array<ObjectTypeDefinitionNode>;
 
@@ -313,7 +316,7 @@ export const types = (
           (node) =>
             node.kind === Kind.OBJECT_TYPE_DEFINITION &&
             // We don't expose these types
-            !["Query", "Mutation"].includes(node.name.value),
+            !["Query", "Mutation", "Subscription"].includes(node.name.value),
         ) as Array<ObjectTypeDefinitionNode>
       ).map(
         (node) =>
@@ -402,7 +405,7 @@ export const queriesTypes = (
       (node) =>
         node.kind === Kind.OBJECT_TYPE_DEFINITION &&
         // We don't expose these types
-        !["Query", "Mutation"].includes(node.name.value),
+        !["Query", "Mutation", "Subscription"].includes(node.name.value),
     ) as Array<ObjectTypeDefinitionNode>
   )
     .map((node) =>

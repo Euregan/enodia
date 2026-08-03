@@ -180,6 +180,157 @@ feed.forEach((item) => {
 On the server, resolvers for a union-typed field must return the matching member
 tagged with its `__typename` so the server can resolve the concrete type.
 
+## Subscriptions
+
+Add a `Subscription` root type to your schema and Enodia generates a
+subscriptions transport for both the client and the server, speaking the
+[`graphql-ws`](https://github.com/enisdenjo/graphql-ws) protocol
+(`graphql-transport-ws`). This needs a couple of extra packages that are **not**
+installed by default, since not every project needs subscriptions:
+
+```bash
+npm install -D graphql-ws ws @types/ws
+```
+
+### Server
+
+A subscription resolver returns an `AsyncIterable` of the field's return type —
+Enodia handles wrapping each yielded value into the right GraphQL shape. Enodia
+doesn't ship a pub/sub of its own (the same way it doesn't ship a database
+client for `Query`/`Mutation` resolvers): pair it with
+[`graphql-subscriptions`](https://github.com/apollographql/graphql-subscriptions)'s
+`PubSub`, a small, well-known helper that does exactly this job:
+
+```bash
+npm install graphql-subscriptions
+```
+
+```typescript
+import { PubSub } from "graphql-subscriptions";
+
+const pubsub = new PubSub();
+const MESSAGE_ADDED = "MESSAGE_ADDED";
+
+export const { listener, subscriptionServer } = server()(fieldsConfiguration)({
+  Query: {
+    messages: (args: { roomId: string }) => messagesByRoom[args.roomId] ?? [],
+  },
+  Mutation: {
+    sendMessage: async (args: { roomId: string; text: string }) => {
+      const message = { id: randomUUID(), text: args.text, roomId: args.roomId };
+      (messagesByRoom[args.roomId] ??= []).push(message);
+      await pubsub.publish(MESSAGE_ADDED, message); // publish the entity itself
+      return message;
+    },
+  },
+  Subscription: {
+    messageAdded: async function* (args: { roomId: string }) {
+      // `PubSub` fans every publish out to every subscriber on the topic;
+      // per-argument filtering (here, by roomId) is on you.
+      for await (const message of pubsub.asyncIterableIterator<Message>(MESSAGE_ADDED)) {
+        if (message.roomId === args.roomId) yield message;
+      }
+    },
+  },
+});
+```
+
+`PubSub` on its own is in-process only — a mutation handled by one server
+instance won't reach clients connected to another. For anything running more
+than one instance, swap it for a broker-backed pub/sub (Redis, Postgres
+`LISTEN`/`NOTIFY`, etc.); the resolver shape above doesn't change, since Enodia
+only cares that you hand back an `AsyncIterable`.
+
+Once the schema has a `Subscription` root, `server(...)` returns
+`{ listener, subscriptionServer }` instead of a plain request handler —
+`listener` is that same HTTP handler, and `subscriptionServer` wires
+[`graphql-ws`](https://github.com/enisdenjo/graphql-ws) onto a
+[`ws`](https://github.com/websockets/ws) `WebSocketServer` you construct
+yourself:
+
+```typescript
+import { createServer } from "http";
+import { WebSocketServer } from "ws";
+
+const httpServer = createServer(listener);
+const webSocketServer = new WebSocketServer({ server: httpServer, path: "/graphql" });
+const dispose = subscriptionServer(webSocketServer);
+```
+
+`server`'s options gain a second, WS-specific context function alongside
+`instantiateContext`, since a WebSocket upgrade has no `ServerResponse` and
+carries the client's `connection_init` payload instead:
+
+```typescript
+server({
+  instantiateContext: (request, response) => /* ... */,
+  instantiateSubscriptionContext: (request, connectionParams) => /* ... */,
+})(/* ... */);
+```
+
+With [`permissions`](#permissions) enabled, a subscribe resolver returns
+`Authorized<AsyncIterable<T>> | Denied` — the check runs once, before the
+stream starts, not per event:
+
+```typescript
+Subscription: {
+  messageAdded: (args, context) =>
+    context.canSubscribe
+      ? new Authorized(messagesFor(args.roomId))
+      : new Denied("You can't subscribe to this room"),
+},
+```
+
+### Client
+
+The generated client exposes a `subscription` bucket alongside `query` and
+`mutation`. It takes a selection and args like a query, plus callbacks instead
+of returning a promise, and returns an unsubscribe function:
+
+```typescript
+const unsubscribe = client.subscription.messageAdded(
+  ["id", "text"],
+  { roomId: "general" },
+  { onData: (message) => console.log(message) },
+);
+```
+
+When you generate React hooks, each subscription field also gets a
+`useXxxSubscription` hook. It subscribes on mount and whenever the
+query/args change, and unsubscribes on cleanup:
+
+```typescript
+const [loading, error, message] = useMessageAddedSubscription(
+  ["id", "text"],
+  { roomId: "general" },
+);
+```
+
+Subscription events feed into the same [normalized cache](#normalized-cache)
+queries and mutations use: if an entity a subscription updates is already
+displayed by a mounted query hook, that hook re-renders with the new value —
+no manual refetch, and no need to also subscribe from wherever the entity is
+shown.
+
+By default the WS endpoint is derived from the client's URL by swapping the
+protocol (`http` → `ws`, `https` → `wss`). Override it — for example when
+subscriptions run on a different host or path — with `wsUrl`:
+
+```typescript
+export default defineConfig({
+  client: {
+    react: {
+      url: "http://localhost:3000/graphql",
+      wsUrl: "wss://realtime.example.com/graphql",
+    },
+  },
+});
+```
+
+The plain client accepts the same override through the options object passed
+to `enodia(url, options)`, applied to every subscription made from that
+client instance.
+
 ## Configuration
 
 ### `schema`

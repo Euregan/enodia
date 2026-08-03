@@ -14,6 +14,7 @@ import {
   getMutations,
   getObjectTypes,
   getQueries,
+  getSubscriptions,
   gqlTypeToTsName,
   gqlTypeToTsString,
   isEnum,
@@ -166,7 +167,7 @@ const fieldTypeToSchemaType = (
 
 // Generators
 
-const imports = (permissions: boolean) =>
+const imports = (permissions: boolean, subscriptions: boolean) =>
   [
     'import { IncomingMessage, ServerResponse } from "http"',
     `import { ${[
@@ -186,6 +187,9 @@ const imports = (permissions: boolean) =>
       "GraphQLBoolean",
       ...(permissions ? ["GraphQLError"] : []),
     ].join(", ")} } from "graphql"`,
+    ...(subscriptions
+      ? ['import { useServer, type WebSocketServer } from "graphql-ws/use/ws"']
+      : []),
   ].join("\n");
 
 const serverTypes = (permissions: boolean) =>
@@ -336,11 +340,34 @@ const queriesAndMutationsResolversType = (
           .concat(["    }"])
       : [];
 
+  const subscriptions = getSubscriptions(schema);
+  const subscription =
+    subscriptions && subscriptions.fields
+      ? ["    Subscription: {"]
+          .concat(
+            subscriptions.fields.map((field) => {
+              const subscriptionReturnType = wrapPermission(
+                `AsyncIterable<${gqlTypeToReturnTsString(field.type, scalars, enums, unions)}>`,
+                permissions,
+              );
+              return `${jsDoc(field.description?.value, "        ")}        ${field.name.value}: (${queryFunctionParameters(
+                field,
+                scalars,
+                enums,
+              )}${
+                field.arguments && field.arguments.length > 0 ? ", " : ""
+              }context: Context) => ${subscriptionReturnType} | Promise<${subscriptionReturnType}>`;
+            }),
+          )
+          .concat(["    }"])
+      : [];
+
   return [
     `export type QueriesAndMutationsResolvers<Context, ${partialResolverConstraints}> = {`,
   ]
     .concat(query)
     .concat(mutation)
+    .concat(subscription)
     .concat(["}"])
     .join("\n");
 };
@@ -473,6 +500,45 @@ const queryResolveExpression = (
         }context.userContext)`,
       ];
 
+const subscriptionResolveExpression = (
+  fieldName: string,
+  withArgs: boolean,
+  permissions: boolean,
+) =>
+  permissions
+    ? [
+        "                subscribe: async (source, args, context, info) => {",
+        `                    const permissionResult = await Subscription.${fieldName}(${
+          withArgs ? "args, " : ""
+        }context.userContext)`,
+        "",
+        "                    if (permissionResult instanceof Denied) {",
+        `                        throw new GraphQLError(permissionResult.reason ?? "Forbidden")`,
+        "                    }",
+        "",
+        "                    const iterable = permissionResult.content",
+        "",
+        "                    return (async function* () {",
+        "                        for await (const value of iterable) {",
+        `                            yield { ${fieldName}: value }`,
+        "                        }",
+        "                    })()",
+        "                }",
+      ]
+    : [
+        "                subscribe: async (source, args, context, info) => {",
+        `                    const iterable = await Subscription.${fieldName}(${
+          withArgs ? "args, " : ""
+        }context.userContext)`,
+        "",
+        "                    return (async function* () {",
+        "                        for await (const value of iterable) {",
+        `                            yield { ${fieldName}: value }`,
+        "                        }",
+        "                    })()",
+        "                }",
+      ];
+
 const schemaFromConfiguration = (
   schema: DocumentNode,
   scalars: Array<GqlScalarToTs>,
@@ -547,9 +613,7 @@ const schemaFromConfiguration = (
                 `                    const permissionResult = await Mutation.${
                   field.name.value
                 }(${
-                  field.arguments && field.arguments.length > 0
-                    ? "args, "
-                    : ""
+                  field.arguments && field.arguments.length > 0 ? "args, " : ""
                 }context.userContext)`,
                 "",
                 "                    if (permissionResult instanceof Denied) {",
@@ -571,9 +635,7 @@ const schemaFromConfiguration = (
                 `                    const result = await Mutation.${
                   field.name.value
                 }(${
-                  field.arguments && field.arguments.length > 0
-                    ? "args, "
-                    : ""
+                  field.arguments && field.arguments.length > 0 ? "args, " : ""
                 }context.userContext)`,
                 "",
                 "                    if (result instanceof DetailedResponse) {",
@@ -600,11 +662,52 @@ const schemaFromConfiguration = (
         ]
       : [];
 
+  const subscriptions = getSubscriptions(schema);
+
+  const subscriptionFields =
+    subscriptions && subscriptions.fields
+      ? subscriptions.fields.flatMap((field) => [
+          `            ${field.name.value}: {`,
+          `                type: ${fieldTypeToSchemaType(
+            field.type,
+            scalars,
+            enums,
+          )},`,
+          "                args: {",
+          ...(field.arguments || []).map(
+            (arg) =>
+              `                    ${
+                arg.name.value
+              }: { type: ${fieldTypeToSchemaType(arg.type, scalars, enums)} },`,
+          ),
+          "                },",
+          ...subscriptionResolveExpression(
+            field.name.value,
+            Boolean(field.arguments && field.arguments.length > 0),
+            permissions,
+          ),
+          "            },",
+        ])
+      : [];
+
+  const subscription =
+    subscriptionFields.length > 0
+      ? [
+          "    subscription: new GraphQLObjectType({",
+          '        name: "Subscription",',
+          "        fields: {",
+          ...subscriptionFields,
+          "        },",
+          "    }),",
+        ]
+      : [];
+
   return [
     "const schema = new GraphQLSchema({",
     "    assumeValid: true,",
     ...query,
     ...mutation,
+    ...subscription,
     "    types: [",
     ...[
       `        ${scalars
@@ -636,45 +739,15 @@ const server = (
   const resolversGenerics = fieldResolversGenericSpread(schema, enums);
 
   const mutations = getMutations(schema);
+  const subscriptions = getSubscriptions(schema);
 
-  return [
-    "type EnodiaOptions<Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void> = {",
-    "    instantiateContext?: (request: Request, response: Response) => Context | Promise<Context>",
-    "}",
-    "",
-    "export const buildSchema =",
-    "    <Context = void>() =>",
-    `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
-    `    ({ Query${
-      mutations ? ", Mutation" : ""
-    } }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
-    ...typesFromConfiguration(schema, scalars, enums, unions, permissions).map(
-      (line) => `    ${line}`,
-    ),
-    "    Object.entries(fieldsConfiguration)",
-    "",
-    ...schemaFromConfiguration(
-      schema,
-      scalars,
-      enums,
-      unions,
-      permissions,
-    ).map((line) => `    ${line}`),
-    "",
-    "    return schema",
-    "}",
-    "",
-    "export const server =",
-    "    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateContext }: EnodiaOptions<Request, Response, Context> = {}) =>",
-    `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
-    `    ({ Query${
-      mutations ? ", Mutation" : ""
-    } }: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
-    `    const schema = buildSchema<Context>()(fieldsConfiguration)({ Query${
-      mutations ? ", Mutation" : ""
-    } })`,
-    "",
-    "    return async (request: Request, response: Response) => {",
+  const resolversDestructure = `{ Query${mutations ? ", Mutation" : ""}${
+    subscriptions ? ", Subscription" : ""
+  } }`;
+
+  // Shared between the plain-HTTP return and the `listener` it becomes once a
+  // Subscription root also needs `subscriptionServer` returned alongside it.
+  const httpHandlerBody = [
     "        let body = ''",
     "",
     "        request.on('data', (chunk) => {",
@@ -708,8 +781,63 @@ const server = (
     "            response.statusCode = 200",
     "            response.end(global.JSON.stringify(result))",
     "        })",
-    "    }",
+  ];
+
+  return [
+    "type EnodiaOptions<Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void> = {",
+    "    instantiateContext?: (request: Request, response: Response) => Context | Promise<Context>",
+    ...(subscriptions
+      ? [
+          "    instantiateSubscriptionContext?: (request: IncomingMessage, connectionParams: Record<string, unknown> | undefined) => Context | Promise<Context>",
+        ]
+      : []),
     "}",
+    "",
+    "export const buildSchema =",
+    "    <Context = void>() =>",
+    `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
+    `    (${resolversDestructure}: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
+    ...typesFromConfiguration(schema, scalars, enums, unions, permissions).map(
+      (line) => `    ${line}`,
+    ),
+    "    Object.entries(fieldsConfiguration)",
+    "",
+    ...schemaFromConfiguration(schema, scalars, enums, unions, permissions).map(
+      (line) => `    ${line}`,
+    ),
+    "",
+    "    return schema",
+    "}",
+    "",
+    "export const server =",
+    `    <Request extends IncomingMessage = IncomingMessage, Response extends ServerResponse<IncomingMessage> = ServerResponse<IncomingMessage>, Context = void>({ instantiateContext${
+      subscriptions ? ", instantiateSubscriptionContext" : ""
+    } }: EnodiaOptions<Request, Response, Context> = {}) =>`,
+    `    <${partialResolverConstraints}>(fieldsConfiguration: FieldsResolvers<Context, ${resolversGenerics}>) =>`,
+    `    (${resolversDestructure}: QueriesAndMutationsResolvers<Context, ${resolversGenerics}>) => {`,
+    `    const schema = buildSchema<Context>()(fieldsConfiguration)(${resolversDestructure})`,
+    "",
+    ...(subscriptions
+      ? [
+          "    const listener = async (request: Request, response: Response) => {",
+          ...httpHandlerBody,
+          "    }",
+          "",
+          "    const subscriptionServer = (webSocketServer: WebSocketServer) =>",
+          "        useServer({",
+          "            schema,",
+          "            context: async (ctx) => ({ userContext: await instantiateSubscriptionContext?.(ctx.extra.request, ctx.connectionParams) }),",
+          "        }, webSocketServer)",
+          "",
+          "    return { listener, subscriptionServer }",
+          "}",
+        ]
+      : [
+          "    return async (request: Request, response: Response) => {",
+          ...httpHandlerBody,
+          "    }",
+          "}",
+        ]),
   ].join("\n");
 };
 
@@ -728,7 +856,7 @@ const schemaToServer = (
   const { scalars, enums, unions } = resolveScalars(schema, scalarTypes);
 
   return [
-    imports(permissions),
+    imports(permissions, Boolean(getSubscriptions(schema))),
     scalarImports,
     types(schema, scalars, enums, unions),
     serverTypes(permissions),

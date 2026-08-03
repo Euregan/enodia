@@ -109,6 +109,40 @@ beforeAll(async () => {
     },
   );
 
+  const subscriptions = schemaToWeb(
+    gql`
+      type User {
+        id: ID!
+        name: String!
+        posts: [Post]!
+      }
+
+      type Post {
+        id: ID!
+        content: String!
+        author: User!
+      }
+
+      type Query {
+        user(id: ID!): User
+        users: [User]!
+      }
+
+      type Mutation {
+        createUser(name: String!): User!
+      }
+
+      type Subscription {
+        postAdded(authorId: ID!): Post!
+      }
+    `,
+    {
+      scalarTypes: {},
+      scalarImports: "",
+      withReact: { url: "http://localhost:3000/graphql" },
+    },
+  );
+
   // The path is relative to the root of the project
   await fs.mkdir("./generated-tests-files", { recursive: true });
   await fs.writeFile("./generated-tests-files/justQueries.ts", justQueries);
@@ -116,9 +150,10 @@ beforeAll(async () => {
     "./generated-tests-files/queriesAndMutations.ts",
     queriesAndMutations,
   );
+  await fs.writeFile("./generated-tests-files/subscriptions.ts", subscriptions);
 });
 
-test.each(["justQueries", "queriesAndMutations"])(
+test.each(["justQueries", "queriesAndMutations", "subscriptions"])(
   "validate file %s",
   (client) => {
     const program = ts.createProgram({
