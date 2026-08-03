@@ -172,7 +172,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     // precise union against a schema's full `Query` type can make that
     // spread's literal type too large for TS to represent.
     "  const ownFields = (returns ?? []).filter((field) => typeof field === 'string') as Array<any>;",
-    "  for (const field of returns ?? []) {",
+    "  for (const field of (returns ?? []) as Array<any>) {",
     "    if (typeof field === 'string') { record[field] = data[field]; continue; }",
     "    if ('$on' in field && field.$on) {",
     "      const selection = (field.$on as Record<string, Fields$>)[data.__typename];",
@@ -212,7 +212,7 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
     "  if (!source) return MISS;",
     "  if (node.__ref) touched.push(node.__ref);",
     "  const out: Record<string, any> = {};",
-    "  for (const field of returns ?? []) {",
+    "  for (const field of (returns ?? []) as Array<any>) {",
     "    if (typeof field === 'string') {",
     "      if (!(field in source)) return MISS;",
     "      out[field] = source[field];",

@@ -339,8 +339,6 @@ export const types = (
       "  [K in keyof T]: T[K];",
       "} & unknown;",
       "",
-      "type KeysOfUnion$<T> = T extends T ? keyof T: never;",
-      "",
       "type MergedUnion$<T> = (T extends unknown ? (k: T) => void : never) extends ((k: infer I) => void) ? I : never;",
     ])
     .join("\n");

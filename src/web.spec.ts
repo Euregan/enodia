@@ -596,3 +596,57 @@ test("GraphQL descriptions become JSDoc comments on the generated declarations",
 
   expect(descriptionErrors).toHaveLength(0);
 });
+
+test("generated client typechecks for a schema where every object type's own fields are all scalar/enum", async () => {
+  // No field anywhere in this schema returns another object type, so
+  // `Query` (the union of every `FooQuery[number]`) is a pure string
+  // union and `Exclude<Query, string>` is `never`. The cache helpers
+  // (fieldsToQuery/resultsToArgs/returnsToVariables/normalize/denormalize)
+  // still declare an object-selection branch generically for the general
+  // case, and used to type it as `Exclude<Query, string>` - unreachable at
+  // runtime here, but a real compile error, since nothing has zero members
+  // to draw from.
+  const client = schemaToWeb(
+    gql`
+      type MarkCandidate {
+        applicationNumber: String!
+        score: Int
+      }
+
+      type Query {
+        search(ids: [Int!]): [MarkCandidate!]!
+      }
+    `,
+    {
+      scalarTypes: {},
+      scalarImports: "",
+      withReact: { url: "http://localhost:3000/graphql" },
+    },
+  );
+
+  await fs.mkdir("./generated-tests-files", { recursive: true });
+  const outputPath = "./generated-tests-files/flatSchema.ts";
+  await fs.writeFile(outputPath, client);
+
+  const program = ts.createProgram({
+    options: {
+      noEmit: true,
+      strict: true,
+      noUnusedLocals: true,
+      noUnusedParameters: true,
+      noFallthroughCasesInSwitch: true,
+    },
+    rootNames: [outputPath],
+  });
+
+  const flatSchemaErrors = ts
+    .getPreEmitDiagnostics(program)
+    .concat(program.emit().diagnostics)
+    .map((error) => error.messageText);
+
+  if (flatSchemaErrors.length > 0) {
+    console.log(flatSchemaErrors);
+  }
+
+  expect(flatSchemaErrors).toHaveLength(0);
+});
