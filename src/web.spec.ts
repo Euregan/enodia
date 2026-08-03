@@ -650,3 +650,29 @@ test("generated client typechecks for a schema where every object type's own fie
 
   expect(flatSchemaErrors).toHaveLength(0);
 });
+
+test("generated React hook types a list-typed query argument as an array, not its element type", () => {
+  // `queryFunctionParameters` builds the hook's own `(query, args, options)`
+  // signature and has its own inline copy of the arg-type declaration logic
+  // (it doesn't call `argsToTsDeclaration`), so it carried the same
+  // list-typed-argument bug independently of that function.
+  const client = schemaToWeb(
+    gql`
+      type MarkCandidate {
+        applicationNumber: String!
+      }
+
+      type Query {
+        search(ids: [Int!]): [MarkCandidate!]!
+      }
+    `,
+    {
+      scalarTypes: {},
+      scalarImports: "",
+      withReact: { url: "http://localhost:3000/graphql" },
+    },
+  );
+
+  expect(client).toContain("ids?: Array<number>");
+  expect(client).not.toContain("ids?: number");
+});
