@@ -186,7 +186,7 @@ const setup = async () => {
       },
     });
 
-  return { makeClient, state };
+  return { makeClient, state, enodia };
 };
 
 test("caches a query and merges entity fields across selections", async () => {
@@ -467,9 +467,69 @@ test("a subscription's onError fires when the transport reports an error", async
   });
 
   const { sink } = graphqlWsMock.subscriptions[0];
-  sink.error(new Error("connection lost"));
+  const transportError = new Error("connection lost");
+  sink.error(transportError);
 
-  expect(errors).toEqual([new Error("connection lost")]);
+  // Error$ is a real Error everywhere it's surfaced to a consumer - a
+  // consumer can rely on instanceof/.message regardless of whether the
+  // underlying transport handed onError an Error, a GraphQL error array, or
+  // a CloseEvent. An Error that arrives as one is kept as-is (identity and
+  // stack preserved), not rebuilt into a lookalike.
+  expect(errors).toEqual([transportError]);
+  expect(errors[0]).toBe(transportError);
+});
+
+test("a subscription's onError extracts the reason from a WebSocket CloseEvent", async () => {
+  const { makeClient } = await setup();
+  const client = makeClient();
+
+  const errors: Array<unknown> = [];
+  client.subscription.userUpdated(["name"], { id: "1" }, {
+    onData: () => {},
+    onError: (error: unknown) => errors.push(error),
+  });
+
+  const { sink } = graphqlWsMock.subscriptions[0];
+  // graphql-ws intentionally types Sink.error()'s argument as `unknown` since
+  // it can also be a bare CloseEvent (no `message`, only `code`/`reason`) -
+  // it avoids bundling DOM typings for a client that also runs in Node.
+  sink.error({ code: 4401, reason: "Unauthorized", wasClean: false });
+
+  expect(errors).toEqual([new Error("Unauthorized")]);
+});
+
+test("a subscription's onError falls back to the close code when a CloseEvent has no reason", async () => {
+  const { makeClient } = await setup();
+  const client = makeClient();
+
+  const errors: Array<unknown> = [];
+  client.subscription.userUpdated(["name"], { id: "1" }, {
+    onData: () => {},
+    onError: (error: unknown) => errors.push(error),
+  });
+
+  const { sink } = graphqlWsMock.subscriptions[0];
+  sink.error({ code: 1006, reason: "", wasClean: false });
+
+  expect(errors).toEqual([new Error("Connection closed (code 1006)")]);
+});
+
+test("a query rejects with a real Error when the response carries GraphQL errors", async () => {
+  const { enodia } = await setup();
+  const client = enodia("http://localhost/graphql", {
+    fetchPolicy: "network-only",
+    // @ts-expect-error the generated fetch stub only needs .json()
+    fetch: async () => ({
+      json: async () => ({
+        errors: [{ message: "relation \"graphile_worker.jobs\" does not exist" }],
+        data: null,
+      }),
+    }),
+  });
+
+  await expect(client.query.user(["name"], { id: "1" })).rejects.toEqual(
+    new Error('relation "graphile_worker.jobs" does not exist'),
+  );
 });
 
 test("subscribe() sends a subscription operation for the field being subscribed to", async () => {

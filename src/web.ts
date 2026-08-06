@@ -277,6 +277,35 @@ const store = (schema: DocumentNode, enums: Array<EnumTypeDefinitionNode>) => {
   ].join("\n");
 };
 
+// What actually gets thrown/rejected along the way - a network TypeError
+// from fetch(), a GraphQL response's `errors` array, a graphql-ws error
+// frame - is never consistently one shape, so this is the one place that
+// normalizes whatever came in to a real Error: preserved as-is (identity
+// and stack kept) when it already is one, wrapped otherwise.
+const errorRuntime = () =>
+  [
+    "const toErrorMessage$ = (error: unknown): string => {",
+    "  if (typeof error === 'string') return error;",
+    "  if (error instanceof Error) return error.message;",
+    "  if (Array.isArray(error) && error.length > 0) return toErrorMessage$(error[0]);",
+    "  if (error && typeof error === 'object' && 'message' in error) return String(error.message);",
+    // graphql-ws's Sink.error() is documented to pass an Error, a
+    // GraphQLError[], or - since it avoids bundling DOM typings - an
+    // untyped CloseEvent for a dropped WS connection. That shape has
+    // `reason`/`code`, not `message`, so without this branch a real
+    // connection drop (auth failure, proxy hiccup, server restart) would
+    // silently fall through to the generic message below.
+    "  if (error && typeof error === 'object' && 'code' in error && 'reason' in error) {",
+    "    const reason = String(error.reason);",
+    "    return reason.length > 0 ? reason : `Connection closed (code ${String(error.code)})`;",
+    "  }",
+    "  return 'Unknown error';",
+    "};",
+    "",
+    "const toError$ = (error: unknown): Error =>",
+    "  error instanceof Error ? error : new Error(toErrorMessage$(error));",
+  ].join("\n");
+
 const call = (withCodecs: boolean, defaultFetchPolicy: FetchPolicy) =>
   [
     "const call = async (",
@@ -307,25 +336,34 @@ const call = (withCodecs: boolean, defaultFetchPolicy: FetchPolicy) =>
     '      throw new Error(`No cached data for query "${query}" with fetchPolicy "cache-only".`);',
     "    }",
     "",
-    "    const result = await (options.fetch || fetch)(graphqlServerUrl, {",
-    "      method: 'POST',",
-    "      body: JSON.stringify({",
-    "        operationName: query,",
-    "        query: `${queryOrMutation} ${query}${",
-    "          argTypes && args ? `(${argsToGql(argTypes, args, queryType, effectiveReturns)})` : ''",
-    "        } {\\n ${query}${",
-    "          args ? `(${variablesToArgs(args)})` : ''",
-    "        }\\n ${fieldsToQuery(effectiveReturns)} }`,",
+    "    let result;",
+    "    try {",
+    "      result = await (options.fetch || fetch)(graphqlServerUrl, {",
+    "        method: 'POST',",
+    "        body: JSON.stringify({",
+    "          operationName: query,",
+    "          query: `${queryOrMutation} ${query}${",
+    "            argTypes && args ? `(${argsToGql(argTypes, args, queryType, effectiveReturns)})` : ''",
+    "          } {\\n ${query}${",
+    "            args ? `(${variablesToArgs(args)})` : ''",
+    "          }\\n ${fieldsToQuery(effectiveReturns)} }`,",
     withCodecs
-      ? "        variables: { ...encodeArguments(args, argTypes), ...returnsToVariables(effectiveReturns) },"
-      : "        variables: { ...args, ...returnsToVariables(effectiveReturns) },",
-    "      }),",
-    "      headers: {",
-    "        'Content-Type': 'application/json',",
-    "        ...options.headers",
-    "      },",
-    "      credentials: 'include',",
-    "    }).then((response: Response) => response.json());",
+      ? "          variables: { ...encodeArguments(args, argTypes), ...returnsToVariables(effectiveReturns) },"
+      : "          variables: { ...args, ...returnsToVariables(effectiveReturns) },",
+    "        }),",
+    "        headers: {",
+    "          'Content-Type': 'application/json',",
+    "          ...options.headers",
+    "        },",
+    "        credentials: 'include',",
+    "      }).then((response: Response) => response.json());",
+    "    } catch (networkError) {",
+    "      throw toError$(networkError);",
+    "    }",
+    "",
+    "    if (result && result.errors && result.errors.length > 0) {",
+    "      throw toError$(result.errors);",
+    "    }",
     "",
     "    if (!result || !result.data || result.data[query] === undefined) {",
     "      return result;",
@@ -427,7 +465,7 @@ const subscriptionRuntime = (withCodecs: boolean) =>
     "        const clean = denormalizeChild(queryType, returns, structure, touched);",
     "        callbacks.onData(clean !== MISS ? clean : value);",
     "      },",
-    "      error: (error) => callbacks.onError?.(error as Error$),",
+    "      error: (error) => callbacks.onError?.(toError$(error)),",
     "      complete: () => callbacks.onComplete?.(),",
     "    },",
     "  );",
@@ -973,6 +1011,7 @@ const schemaToWeb = (
     returnsToVariables(),
     withCodecs ? clientCodecRuntime(schema, scalars, enums, unions) : "",
     store(schema, enums),
+    errorRuntime(),
     call(withCodecs, callDefaultFetchPolicy),
     withSubscriptions ? subscriptionRuntime(withCodecs) : "",
     queriesTypes(schema, scalars, enums, unions),

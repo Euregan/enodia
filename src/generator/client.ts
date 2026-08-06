@@ -45,7 +45,7 @@ export const clientTypes = (schema: DocumentNode, react: boolean = false) =>
       // `Error$` is used by the plain client's subscription callbacks too
       // (`subscribe()`, generated whenever the schema has a `Subscription`
       // root), not just by hooks - so it can't be gated on `react` alone.
-      react || getSubscriptions(schema) ? ["", "type Error$ = string;"] : [],
+      react || getSubscriptions(schema) ? ["", "type Error$ = Error;"] : [],
     )
     .concat(
       react && getQueries(schema)
