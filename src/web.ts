@@ -562,7 +562,9 @@ const subscriptionFunctions = (
       const usesQuerySelection =
         !isScalar(field.type, scalars) && !isEnum(field.type, enums);
       const hasArgs = !!(field.arguments && field.arguments.length > 0);
-      const params = queryFunctionParameters(field, scalars, enums);
+      // Subscriptions always have a required `callbacks` param after `args`,
+      // so `args` can never be `?` even when every field on it is optional.
+      const params = queryFunctionParameters(field, scalars, enums, true, true);
       const dataType = queryResult(field.type, scalars, enums);
       return [
         `${jsDoc(field.description?.value, "    ")}    ${field.name.value}: ${
